@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+.clasp.json
+.clasprc.json
+node_modules/
+tmp/
+*.log

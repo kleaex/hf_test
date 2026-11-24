@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "sample": true,
+  "exhibitors": [
+    {
+      "id": "sample-exhibitor-a",
+      "name": "架空俳句室",
+      "genre": "俳句",
+      "description": "日々の景色を持ち寄る、架空の俳句同人です。",
+      "booth": "A-01",
+      "publications": [
+        {"id":"sample-book-a1","title":"朝の窓（架空）","author":"架空俳句室 編","description":"朝の光をテーマにした合同句集。","price":500,"releaseType":"新刊"},
+        {"id":"sample-book-a2","title":"雨の日帖（架空）","author":"架空俳句室 編","description":"雨にまつわる俳句と小さな随筆。","price":300,"releaseType":"既刊"}
+      ]
+    },
+    {
+      "id": "sample-exhibitor-b",
+      "name": "架空ことば舎",
+      "genre": "短歌",
+      "description": "短歌と散文を小さな本にまとめる、架空の出店者です。",
+      "booth": "A-02",
+      "publications": [
+        {"id":"sample-book-b1","title":"帰り道（架空）","author":"架空ことば舎 編","description":"街と暮らしを詠んだ短歌の本。","price":700,"releaseType":"新刊"},
+        {"id":"sample-book-b2","title":"余白通信（架空）","author":"架空ことば舎 編","description":"短歌と読書の記録を集めた小冊子。","price":400,"releaseType":"既刊"}
+      ]
+    }
+  ]
+}
