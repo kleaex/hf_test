@@ -1,25 +1,206 @@
 <!doctype html>
 <html lang="ja">
-<head><base target="_top"><meta name="viewport" content="width=device-width, initial-scale=1"><title>接続確認</title></head>
-<body style="font-family:sans-serif;max-width:640px;margin:3rem auto;padding:1rem;line-height:1.8">
-<h1>出店者画面の接続確認</h1>
-<p>実験用です。申込・ログイン・情報保存・画像アップロードはまだ利用できません。</p>
-<button id="check" type="button" style="font:inherit;padding:.5rem 1rem">GASへの接続を確認</button>
-<p id="result" role="status" aria-live="polite"></p>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>出店者編集（実験用）</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f4f0; color: #242c30; font-family: sans-serif; line-height: 1.7; }
+    main { max-width: 760px; margin: 2rem auto; padding: 0 1rem 3rem; }
+    h1 { font-size: 1.65rem; } h2 { font-size: 1.25rem; }
+    section, .book { background: white; border: 1px solid #c6cdca; border-radius: 8px; padding: 1.25rem; margin: 1rem 0; }
+    label { display: block; margin-top: 1rem; font-weight: bold; }
+    input, textarea, select { display: block; width: 100%; min-width: 0; font: inherit; padding: .6rem; border: 1px solid #7a8783; border-radius: 4px; color: inherit; background: white; }
+    textarea { min-height: 7rem; resize: vertical; }
+    button { font: inherit; padding: .6rem 1rem; border: 1px solid #47665a; border-radius: 4px; background: #fff; color: #244c3b; cursor: pointer; }
+    button.primary { background: #244c3b; color: white; }
+    button:disabled { opacity: .55; cursor: default; }
+    .actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
+    .note { color: #4d5c56; font-size: .9rem; }
+    #result { padding: .8rem; border-left: 4px solid #47665a; overflow-wrap: anywhere; }
+    #result:empty { display: none; }
+    fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+    [hidden] { display: none !important; }
+    :focus-visible { outline: 3px solid #af6900; outline-offset: 3px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>出店者編集 <small>実験用</small></h1>
+  <p>登録されたテスト宛先で本人確認し、ご自身の出店情報を編集できます。架空の出店名・頒布物を使用してください。</p>
+  <div class="actions"><button id="check" type="button">接続を確認</button></div>
+  <p id="result" role="status" aria-live="polite"></p>
+  <section id="login">
+    <h2>メールでログイン</h2>
+    <form id="emailForm">
+      <label for="email">登録済みのテスト用メールアドレス</label>
+      <input id="email" type="email" autocomplete="email" maxlength="254" required>
+      <div class="actions"><button id="sendCode" type="submit">確認コードを送信・再送</button></div>
+    </form>
+    <form id="codeForm">
+      <label for="code">確認コード（6桁）</label>
+      <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+      <p class="note">コードは10分間有効です。再送は60秒後から可能です。</p>
+      <div class="actions"><button class="primary" type="submit">ログイン</button></div>
+    </form>
+  </section>
+  <section id="editor" hidden>
+    <h2>出店情報</h2>
+    <p id="savedState" class="note"></p>
+    <form id="profileForm">
+      <fieldset id="fields">
+        <label for="name">出店名（必須・80文字まで）</label><input id="name" maxlength="80" required>
+        <label for="description">紹介文（2,000文字まで）</label><textarea id="description" maxlength="2000"></textarea>
+        <label for="genre">ジャンル（40文字まで）</label><input id="genre" maxlength="40">
+        <h2>頒布物</h2>
+        <p class="note">10点まで登録できます。削除は「保存」で確定します。</p>
+        <div id="books"></div>
+        <button id="addBook" type="button">頒布物を追加</button>
+      </fieldset>
+      <div class="actions"><button id="save" class="primary" type="submit">保存</button></div>
+    </form>
+    <div class="actions">
+      <button id="reload" type="button">保存済みの内容を読み直す</button>
+      <button id="logout" type="button">ログアウト</button>
+    </div>
+    <p class="note">保存しても公開カタログには反映されません。画面を再読み込みすると再ログインが必要です。</p>
+  </section>
+</main>
 <script>
-document.getElementById('check').addEventListener('click', function () {
-  const button = this;
-  const result = document.getElementById('result');
-  button.disabled = true;
-  result.textContent = '確認しています。';
-  google.script.run.withSuccessHandler(function (data) {
-    result.textContent = data.ok ? 'GASに接続できました。保存先・認証は未接続です。' : '接続を確認できませんでした。';
-    button.disabled = false;
-  }).withFailureHandler(function () {
-    result.textContent = '接続に失敗しました。もう一度お試しください。';
-    button.disabled = false;
-  }).getSystemStatus();
+'use strict';
+const $ = id => document.getElementById(id);
+let token = null;
+let data = null;
+let dirty = false;
+let busy = false;
+let pending = null;
+let bookSequence = 0;
+
+function message(text) { $('result').textContent = text; }
+function controls() {
+  $('fields').disabled = busy || !!pending;
+  $('save').disabled = busy;
+  $('save').textContent = pending ? '同じ保存を再試行・結果確認' : '保存';
+  $('reload').disabled = busy;
+  $('logout').disabled = busy;
+  $('check').disabled = busy;
+  for (const node of document.querySelectorAll('#login input, #login button')) node.disabled = busy;
+  $('addBook').disabled = $('books').children.length >= 10;
+}
+function rpc(method, ...args) {
+  return new Promise((resolve, reject) => {
+    if (!window.google || !google.script || !google.script.run) {
+      reject({ network: true, message: 'GASのWebアプリURLから開いてください。' }); return;
+    }
+    google.script.run.withSuccessHandler(result => {
+      if (result && result.ok) resolve(result);
+      else reject(result && result.error || { code: 'UNAVAILABLE', message: '応答を確認できませんでした。' });
+    }).withFailureHandler(() => reject({ network: true, message: '通信結果を確認できませんでした。' }))[method](...args);
+  });
+}
+async function action(operation) {
+  if (busy) return;
+  busy = true; controls();
+  try { await operation(); }
+  catch (error) { message(error.message || '処理を完了できませんでした。'); }
+  finally { busy = false; controls(); }
+}
+function input(labelText, key, value, options = {}) {
+  const label = document.createElement('label');
+  const id = 'book-' + bookSequence + '-' + key;
+  label.htmlFor = id; label.textContent = labelText;
+  const field = document.createElement(options.area ? 'textarea' : 'input');
+  field.id = id; field.dataset.key = key; field.value = value;
+  if (options.max) field.maxLength = options.max;
+  if (options.required) field.required = true;
+  if (options.number) { field.type = 'number'; field.min = '0'; field.max = '1000000'; field.step = '1'; field.required = true; }
+  return [label, field];
+}
+function addBook(book) {
+  bookSequence++;
+  const card = document.createElement('div'); card.className = 'book'; card.dataset.id = book.id || '';
+  card.append(...input('作品名（必須・120文字まで）', 'title', book.title, { max: 120, required: true }),
+    ...input('著者（120文字まで）', 'author', book.author, { max: 120 }),
+    ...input('紹介文（2,000文字まで）', 'description', book.description, { max: 2000, area: true }),
+    ...input('価格（円）', 'price', book.price, { number: true }));
+  const label = document.createElement('label'); label.textContent = '刊行区分'; label.htmlFor = 'book-' + bookSequence + '-release';
+  const select = document.createElement('select'); select.dataset.key = 'releaseType'; select.id = label.htmlFor;
+  for (const text of ['新刊', '既刊', 'その他']) { const option = document.createElement('option'); option.value = text; option.textContent = text; select.append(option); }
+  select.value = book.releaseType;
+  const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'この頒布物を削除';
+  remove.addEventListener('click', () => { card.remove(); dirty = true; controls(); });
+  const actions = document.createElement('div'); actions.className = 'actions'; actions.append(remove);
+  card.append(label, select, actions); $('books').append(card);
+}
+function render(next) {
+  data = next; pending = null; dirty = false;
+  $('name').value = data.profile.name; $('description').value = data.profile.description; $('genre').value = data.profile.genre;
+  $('books').replaceChildren(); data.publications.forEach(addBook);
+  $('savedState').textContent = '更新番号 ' + data.revision + (data.updatedAt ? ' ／ 保存日時 ' + new Date(data.updatedAt).toLocaleString('ja-JP') : ' ／ まだ保存されていません');
+  $('login').hidden = true; $('editor').hidden = false; controls();
+}
+function request() {
+  const publications = Array.from($('books').children, card => {
+    const book = { id: card.dataset.id || null };
+    for (const field of card.querySelectorAll('[data-key]')) book[field.dataset.key] = field.dataset.key === 'price' ? Number(field.value) : field.value;
+    return book;
+  });
+  return { exhibitorId: data.exhibitorId, revision: data.revision, requestId: crypto.randomUUID(),
+    profile: { name: $('name').value, description: $('description').value, genre: $('genre').value }, publications };
+}
+$('check').addEventListener('click', () => action(async () => { await rpc('getSystemStatus'); message('GASと保存先への接続を確認できました。'); }));
+$('emailForm').addEventListener('submit', event => {
+  event.preventDefault(); action(async () => { const result = await rpc('requestLoginCode', $('email').value); $('code').value = ''; message(result.message); });
 });
+$('codeForm').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!$('emailForm').reportValidity()) return;
+  action(async () => {
+    const result = await rpc('verifyLoginCode', $('email').value, $('code').value);
+    token = result.token; $('code').value = ''; $('email').value = ''; render(result.data); message('ログインしました。有効期限は2時間です。');
+  });
+});
+$('fields').addEventListener('input', () => { dirty = true; });
+$('addBook').addEventListener('click', () => {
+  if ($('books').children.length >= 10) return;
+  addBook({ id: null, title: '', author: '', description: '', price: 0, releaseType: '新刊' }); dirty = true; controls();
+});
+$('profileForm').addEventListener('submit', event => {
+  event.preventDefault(); action(async () => {
+    if (!pending) pending = request();
+    controls(); message('保存しています。');
+    try {
+      const result = await rpc('saveProfile', token, pending);
+      render(result.data);
+      message(result.replayed ? '保存済みであることを確認しました。最新の保存内容を表示しています。' : '保存しました。');
+    } catch (error) {
+      // 通信失敗・一時障害は同じ内容とIDで再送。編集を止め、二重作成を防ぐ。
+      if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) {
+        message('保存結果が未確認です。「同じ保存を再試行・結果確認」を押してください。');
+      } else {
+        pending = null; message(error.message);
+      }
+    }
+  });
+});
+$('reload').addEventListener('click', () => {
+  if ((dirty || pending) && !confirm('未保存の入力を破棄し、保存済みの内容を読み直しますか？')) return;
+  action(async () => { const result = await rpc('getMyProfile', token); render(result.data); message('保存済みの内容を読み込みました。'); });
+});
+$('logout').addEventListener('click', () => {
+  if ((dirty || pending) && !confirm('未保存の入力を破棄してログアウトしますか？')) return;
+  action(async () => {
+    // 失効確認が取れるまでトークンを保持し、ログアウトを再試行できるようにする。
+    try { await rpc('logout', token); }
+    catch (error) { if (error.code !== 'UNAUTHENTICATED' && error.code !== 'FORBIDDEN') throw error; }
+    token = null; data = null; pending = null; dirty = false;
+    $('profileForm').reset(); $('books').replaceChildren(); $('editor').hidden = true; $('login').hidden = false;
+    message('ログアウトしました。');
+  });
+});
+window.addEventListener('beforeunload', event => { if (dirty || pending) { event.preventDefault(); event.returnValue = ''; } });
+controls();
 </script>
 </body>
 </html>
