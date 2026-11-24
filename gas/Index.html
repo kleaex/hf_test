@@ -31,6 +31,8 @@
   <p>登録されたテスト宛先で本人確認し、ご自身の出店情報を編集できます。架空の出店名・頒布物を使用してください。</p>
   <div class="actions"><button id="check" type="button">接続を確認</button></div>
   <p id="result" role="status" aria-live="polite"></p>
+  <p id="sessionNotice" class="note" hidden></p>
+  <div class="actions"><button id="restore" type="button" hidden>ログインの復元を再試行</button></div>
   <section id="login">
     <h2>メールでログイン</h2>
     <form id="emailForm">
@@ -64,7 +66,7 @@
       <button id="reload" type="button">保存済みの内容を読み直す</button>
       <button id="logout" type="button">ログアウト</button>
     </div>
-    <p class="note">保存しても公開カタログには反映されません。画面を再読み込みすると再ログインが必要です。</p>
+    <p class="note">保存しても公開カタログには反映されません。同じタブでは再読み込み後も有効期限内のログインを復元します。未保存の入力は復元されません。</p>
   </section>
 </main>
 <script>
@@ -76,6 +78,50 @@ let dirty = false;
 let busy = false;
 let pending = null;
 let bookSequence = 0;
+const SESSION_KEY = 'hf_test.exhibitorSession.v1';
+
+function sessionNotice() {
+  $('sessionNotice').hidden = false;
+  $('sessionNotice').textContent = 'このブラウザーではログイン情報を一時保存できません。再読み込み後は再ログインが必要です。';
+}
+function rememberSession(value) {
+  try {
+    if (value) window.sessionStorage.setItem(SESSION_KEY, value);
+    else window.sessionStorage.removeItem(SESSION_KEY);
+    return true;
+  } catch (_) { sessionNotice(); return false; }
+}
+function storedSession() {
+  try {
+    const value = window.sessionStorage.getItem(SESSION_KEY);
+    if (value === null) return null;
+    if (/^[0-9a-f]{64}$/.test(value)) return value;
+    rememberSession(null);
+  } catch (_) { sessionNotice(); }
+  return null;
+}
+async function restoreSession() {
+  const savedToken = storedSession();
+  $('restore').hidden = true;
+  if (!savedToken) return;
+  message('ログイン情報を確認しています。');
+  try {
+    // 保存されたトークンだけではログイン扱いにしない。期限・失効・所属は毎回GASが確認する。
+    const result = await rpc('getMyProfile', savedToken);
+    token = savedToken;
+    render(result.data);
+    message('ログインを復元し、保存済みの内容を読み込みました。');
+  } catch (error) {
+    if (['UNAUTHENTICATED', 'FORBIDDEN'].includes(error.code)) {
+      rememberSession(null);
+      message('ログインを継続できません。メール確認コードで再ログインしてください。');
+    } else {
+      // 通信失敗と失効を区別し、再試行できるように保存したトークンは残す。
+      $('restore').hidden = false;
+      message('ログイン情報を確認できませんでした。「ログインの復元を再試行」を押してください。');
+    }
+  }
+}
 
 function message(text) { $('result').textContent = text; }
 function controls() {
@@ -85,6 +131,7 @@ function controls() {
   $('reload').disabled = busy;
   $('logout').disabled = busy;
   $('check').disabled = busy;
+  $('restore').disabled = busy;
   for (const node of document.querySelectorAll('#login input, #login button')) node.disabled = busy;
   $('addBook').disabled = $('books').children.length >= 10;
 }
@@ -95,7 +142,11 @@ function rpc(method, ...args) {
     }
     google.script.run.withSuccessHandler(result => {
       if (result && result.ok) resolve(result);
-      else reject(result && result.error || { code: 'UNAVAILABLE', message: '応答を確認できませんでした。' });
+      else {
+        const error = result && result.error || { code: 'UNAVAILABLE', message: '応答を確認できませんでした。' };
+        if (error.code === 'UNAUTHENTICATED') rememberSession(null);
+        reject(error);
+      }
     }).withFailureHandler(() => reject({ network: true, message: '通信結果を確認できませんでした。' }))[method](...args);
   });
 }
@@ -158,7 +209,8 @@ $('codeForm').addEventListener('submit', event => {
   if (!$('emailForm').reportValidity()) return;
   action(async () => {
     const result = await rpc('verifyLoginCode', $('email').value, $('code').value);
-    token = result.token; $('code').value = ''; $('email').value = ''; render(result.data); message('ログインしました。有効期限は2時間です。');
+    token = result.token; rememberSession(token); $('restore').hidden = true;
+    $('code').value = ''; $('email').value = ''; render(result.data); message('ログインしました。有効期限は2時間です。');
   });
 });
 $('fields').addEventListener('input', () => { dirty = true; });
@@ -195,12 +247,15 @@ $('logout').addEventListener('click', () => {
     try { await rpc('logout', token); }
     catch (error) { if (error.code !== 'UNAUTHENTICATED' && error.code !== 'FORBIDDEN') throw error; }
     token = null; data = null; pending = null; dirty = false;
+    rememberSession(null); $('restore').hidden = true;
     $('profileForm').reset(); $('books').replaceChildren(); $('editor').hidden = true; $('login').hidden = false;
     message('ログアウトしました。');
   });
 });
 window.addEventListener('beforeunload', event => { if (dirty || pending) { event.preventDefault(); event.returnValue = ''; } });
+$('restore').addEventListener('click', () => action(restoreSession));
 controls();
+action(restoreSession);
 </script>
 </body>
 </html>

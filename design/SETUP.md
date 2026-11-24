@@ -102,7 +102,11 @@ Session.getActiveUser().getEmail() が常に取得できるとは仮定しない
 - コードは10分・最大5回入力・1回限り。再送は60秒後から、宛先ごと1時間5通・全体1時間20通。
   Google自身のメール送信割当が先に上限に達する場合もある。
 - セッションは2時間、1利用者につき1件。別画面で再ログインすると前のログインは利用できなくなる。
-  ブラウザーの再読み込み後は再ログインする。確認コードの再利用はできない。
+  同じタブの再読み込み時はsessionStorageのトークンをGASで検証し、ログインと保存済み内容を復元する。
+  再読み込みで期限は延長しない。未保存の入力は復元しない。確認コードの再利用はできない。
+  復元時に通信が失敗したら「ログインの復元を再試行」を使う。
+  ブラウザー設定等でStorageが使えない場合は案内を表示し、再読み込み後は再ログインが必要になる。
+  タブの複製・復元ではブラウザーがStorageを引き継ぐ場合があるため、確実に終了するときはログアウトする。
 - 停止は Users の enabled または Memberships の enabled を FALSE にする。
   TRUEに戻す前にSessionsの該当行のrevokedAtへ現在日時の数値（例: `1` でも失効）を入れれば、以前のログインは復活しない。
   メール・所属を変更する場合は、必ず旧セッションを失効させてから変更する。
@@ -115,6 +119,17 @@ Session.getActiveUser().getEmail() が常に取得できるとは仮定しない
   stateJson/authJsonの不正な編集は動作不良を起こすため、内容変更にはアプリを使う。
 - この段階は1開催回用。開催回を追加するときは別の専用環境を用意する。
 - 原画像用の非公開Driveフォルダは、画像実装の段階で作成する。
+
+## ログイン復元変更の配置・確認
+
+今回の復元処理はIndex.htmlの変更。GASのHTMLファイル Index を更新し、
+デプロイの管理から新しいバージョンへ更新する。Sheetsの初期設定の再実行は不要。
+ログイン → 保存 → ブラウザー再読み込みで、コードを再送せずに保存済み内容が表示されることを確認する。
+続いてログアウト → 再読み込みでログイン画面になること、失効済みトークンが復元されないことを確認する。
+GAS HTML Serviceはiframe内で動くため、実際の /exec と利用するブラウザーでStorageの保持・利用可否を確認する。
+
+参考: [sessionStorageの保持期間と制限](https://developer.mozilla.org/en-US/docs/Web/API/Window/sessionStorage)、
+[GAS HTML Serviceの制約](https://developers.google.com/apps-script/guides/html/restrictions)。
 
 参考: [GAS Webアプリ](https://developers.google.com/apps-script/guides/web)、
 [HTML Serviceの呼出しと内部関数](https://developers.google.com/apps-script/guides/html/communication)、

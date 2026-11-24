@@ -1,0 +1,52 @@
+import vm from 'node:vm';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+
+// 実際のIndex.html内スクリプトを動かす最小DOM。描画やブラウザーのStorage挙動は検証しない。
+export function clientHarness(backend, storage = new Map(), options = {}) {
+  class Element {
+    constructor() { this.children = []; this.dataset = {}; this.events = {}; this.hidden = false; this.value = ''; this.textContent = ''; this.disabled = false; }
+    addEventListener(name, handler) { this.events[name] = handler; }
+    append(...nodes) { this.children.push(...nodes); for (const node of nodes) node.parent = this; }
+    replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+    remove() { this.parent.children = this.parent.children.filter(node => node !== this); }
+    querySelectorAll(selector) {
+      const all = this.children.flatMap(node => [node, ...node.querySelectorAll(selector)]);
+      return selector === '[data-key]' ? all.filter(node => node.dataset.key) : [];
+    }
+    reportValidity() { return true; }
+    reset() { for (const id of ['name', 'description', 'genre']) elements[id].value = ''; }
+  }
+  const html = fs.readFileSync(new URL('../gas/Index.html', import.meta.url), 'utf8');
+  const elements = {};
+  for (const match of html.matchAll(/\bid="([^"]+)"/g)) elements[match[1]] = new Element();
+  for (const id of ['editor', 'sessionNotice', 'restore']) elements[id].hidden = true;
+  const calls = [];
+  const google = { script: { get run() {
+    let success, failure;
+    const runner = new Proxy({}, { get(_, name) {
+      if (name === 'withSuccessHandler') return callback => { success = callback; return runner; };
+      if (name === 'withFailureHandler') return callback => { failure = callback; return runner; };
+      return (...args) => {
+        calls.push({ name, args });
+        Promise.resolve().then(() => backend(name, ...args)).then(success, failure);
+      };
+    } }); return runner;
+  } } };
+  const window = { google, addEventListener() {} };
+  Object.defineProperty(window, 'sessionStorage', { get() {
+    if (options.storageBlocked) throw new Error('SecurityError');
+    return { getItem: key => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key) };
+  } });
+  const document = { getElementById: id => elements[id], createElement: () => new Element(),
+    querySelectorAll: () => [elements.email, elements.code, elements.sendCode] };
+  const context = vm.createContext({ window, document, google, crypto, confirm: () => true });
+  const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  vm.runInContext(source, context, { filename: 'Index.html' });
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  const event = async (id, name = 'click') => {
+    elements[id].events[name]({ preventDefault() {} }); await settle();
+  };
+  return { elements, storage, calls, settle, event };
+}
