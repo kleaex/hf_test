@@ -10,17 +10,24 @@ export function clientHarness(backend, storage = new Map(), options = {}) {
     append(...nodes) { this.children.push(...nodes); for (const node of nodes) node.parent = this; }
     replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
     remove() { this.parent.children = this.parent.children.filter(node => node !== this); }
+    removeAttribute(name) { delete this[name]; }
+    prepend(node) { node.remove(); this.children.unshift(node); node.parent = this; }
     querySelectorAll(selector) {
       const all = this.children.flatMap(node => [node, ...node.querySelectorAll(selector)]);
-      return selector === '[data-key]' ? all.filter(node => node.dataset.key) : [];
+      if (selector === '[data-key]') return all.filter(node => node.dataset.key);
+      const tags = selector.split(',').map(tag => tag.trim());
+      return all.filter(node => tags.includes(node.tagName));
     }
     reportValidity() { return true; }
     reset() { for (const id of ['name', 'description', 'genre']) elements[id].value = ''; }
   }
   const html = fs.readFileSync(new URL('../gas/Index.html', import.meta.url), 'utf8');
   const elements = {};
-  for (const match of html.matchAll(/\bid="([^"]+)"/g)) elements[match[1]] = new Element();
-  for (const id of ['editor', 'sessionNotice', 'restore']) elements[id].hidden = true;
+  for (const match of html.matchAll(/<([a-z]+)\b[^>]*\bid="([^"]+)"/g)) {
+    elements[match[2]] = new Element(); elements[match[2]].tagName = match[1];
+  }
+  elements.fields.append(elements.name, elements.description, elements.genre, elements.books, elements.addBook);
+  for (const id of ['editor', 'sessionNotice', 'restore', 'imageConfirm']) elements[id].hidden = true;
   const calls = [];
   const google = { script: { get run() {
     let success, failure;
@@ -39,14 +46,19 @@ export function clientHarness(backend, storage = new Map(), options = {}) {
     return { getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key) };
   } });
-  const document = { getElementById: id => elements[id], createElement: () => new Element(),
+  const document = { getElementById: id => elements[id], createElement: tag => {
+    if (tag === 'canvas' && options.canvas) return options.canvas();
+    const node = new Element(); node.tagName = tag; return node;
+  },
     querySelectorAll: () => [elements.email, elements.code, elements.sendCode] };
-  const context = vm.createContext({ window, document, google, crypto, confirm: () => true });
+  const context = vm.createContext({ window, document, google, crypto, btoa, confirm: () => true,
+    ...(options.createImageBitmap ? { createImageBitmap: options.createImageBitmap } : {}) });
   const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   vm.runInContext(source, context, { filename: 'Index.html' });
   const settle = () => new Promise(resolve => setImmediate(resolve));
   const event = async (id, name = 'click') => {
-    elements[id].events[name]({ preventDefault() {} }); await settle();
+    const target = typeof id === 'string' ? elements[id] : id;
+    target.events[name]({ preventDefault() {}, target }); await settle();
   };
-  return { elements, storage, calls, settle, event };
+  return { elements, storage, calls, settle, event, invoke: (name, ...args) => context[name](...args) };
 }

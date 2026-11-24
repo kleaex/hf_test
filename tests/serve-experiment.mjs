@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { harness } from './gas-harness.mjs';
 
 const h = harness(); h.setup();
-const allowed = new Set(['getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'logout']);
+const allowed = new Set(['getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'logout', 'uploadPublicationImage', 'getPublicationImage']);
 const bridge = `<aside style="padding:1rem;background:#fff1cc">ローカル模擬環境（Google接続・実メール送信なし）<br>宛先: a@example.invalid / b@example.invalid<br><span id="testCode">確認コードは送信操作後に表示します。</span><br><button type="button" id="dropReply">次の保存応答を失わせる</button></aside>
 <script>
 let dropReply = false;
@@ -19,7 +19,7 @@ window.google = { script: { get run() {
         const result = await fetch('/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, args }) }).then(r => r.json());
         if (name === 'requestLoginCode') document.getElementById('testCode').textContent = '模擬メールの確認コード: ' + result.testCode;
         delete result.testCode;
-        if (name === 'saveProfile' && dropReply) { dropReply = false; document.getElementById('dropReply').textContent = '次の保存応答を失わせる'; failure(); return; }
+        if (['saveProfile', 'uploadPublicationImage'].includes(name) && dropReply) { dropReply = false; document.getElementById('dropReply').textContent = '次の保存応答を失わせる'; failure(); return; }
         success(result);
       } catch (_) { failure(); }
     };
@@ -36,7 +36,7 @@ const server = http.createServer(async (req, res) => {
       && req.headers.origin === 'http://127.0.0.1:8081') {
     try {
       let body = '';
-      for await (const chunk of req) { body += chunk; if (body.length > 100000) throw new Error('size'); }
+      for await (const chunk of req) { body += chunk; if (body.length > 2100000) throw new Error('size'); }
       const { name, args } = JSON.parse(body);
       if (!allowed.has(name) || !Array.isArray(args)) throw new Error('entry');
       const result = h.call(name, ...args);

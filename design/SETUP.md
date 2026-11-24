@@ -9,11 +9,11 @@ READMEのローカル起動で確認し、Pagesを有効にする場合は main 
 1. 運営のGoogleアカウントで空のSpreadsheetを新規作成し、「即売会・実験用」などの名前を付ける。
    リンク共有は「制限付き」のままとし、出店者へ共有しない。本番ファイルを指定しない。
 2. 新しい独立したApps Scriptプロジェクトを作る。
-3. gas/ の Code.gs、Store.gs、Auth.gs、Profile.gs、Admin.gs を、それぞれ同名のスクリプトファイルに貼る。
+3. gas/ の Code.gs、Store.gs、Auth.gs、Profile.gs、Admin.gs、Images.gs を、それぞれ同名のスクリプトファイルに貼る。
    Index.html はHTMLファイル Index に貼る。古い疎通確認用コードは置き換える。
    tests/ のファイルは配置しない。
 4. プロジェクト設定でマニフェストを表示し、gas/appsscript.json の内容を設定する。
-   今回はSheetsとメール送信の権限を使う。Drive権限は要求しない。
+   Sheets・メール送信・Driveの権限を使う。Driveは画像保存先をIDで指定するためdriveスコープを使用する。
 
 ## Script Properties
 
@@ -28,6 +28,11 @@ Apps Scriptの「プロジェクトの設定 → スクリプト プロパティ
 | HF_AUTH_SECRET | この実験専用に生成した32バイト以上のランダム秘密値（Base64等、43文字以上） |
 | HF_TEST_EMAILS | テスト担当者が管理する受信可能な宛先のJSON配列。最大10件 |
 | HF_BOOTSTRAP_JSON | 初期利用者と出店者の対応を表すJSON配列。下記参照 |
+| HF_IMAGE_FOLDER_ID | 運営のみがアクセスする実験専用My DriveフォルダのID。画像を使う場合に必要 |
+| HF_EDIT_DEADLINE | 編集終了日時。例: `2026-12-31T23:59:59+09:00`。実際の実験期間に合わせて設定 |
+
+HF_EDIT_DEADLINEは未設定・不正・終了済みならプロフィールも含め読取専用。
+この日時を変更すれば受付を再開できるが、終了済み開催回の再編集は原則行わない。
 
 HF_AUTH_SECRETはPowerShellで次のコマンドを実行して生成し、Google側にだけ登録する。
 出力や履歴を共有しない。他のシステムの秘密値を使い回さない。
@@ -118,7 +123,37 @@ Session.getActiveUser().getEmail() が常に取得できるとは仮定しない
 - Sheetsを直接変更するのは運営のみ。自動処理中の手動編集は避ける。
   stateJson/authJsonの不正な編集は動作不良を起こすため、内容変更にはアプリを使う。
 - この段階は1開催回用。開催回を追加するときは別の専用環境を用意する。
-- 原画像用の非公開Driveフォルダは、画像実装の段階で作成する。
+- 画像保存先は調整済み画像専用。元画像は端末から送信・保存しない。
+
+## 画像機能を既存環境へ追加する
+
+1. 運営のMy Drive直下に実験専用フォルダを新規作成する。共有ドライブ・共有フォルダ内には作らない。
+   「アクセスを管理」でリンク共有を制限付き、アクセスできる人を運営の所有者だけにする。
+   出店者・テスト担当者を直接共有へ追加しない。画像ファイルも個別共有しない。
+2. フォルダURLの `/folders/` の後のIDをHF_IMAGE_FOLDER_IDに設定する。
+3. HF_EDIT_DEADLINEにタイムゾーン付きISO日時を設定する。例は上記。
+4. Images.gsを追加し、Code.gs・Store.gs・Profile.gs・Index（HTML）・appsscript.jsonを更新する。
+   Auth.gs・Admin.gsは以前の内容を維持してよい。初期登録の再実行・Sheetsの列追加は不要。
+5. GASエディタのCode.gsでgetSystemStatusを実行し、追加のDrive権限を承認する。
+   この関数は運営による実行でも設定と接続を確認する。失敗時はWeb画面の接続確認で案内を読む。
+6. デプロイの管理から新しいバージョンへ更新する。
+7. /execで接続確認・ログイン後、作品を保存してから画像を選択し、調整後のプレビューを確認して登録する。
+   「画像を表示」で本人の画像を取得できること、再読込後も一覧が維持されることを確認する。
+8. 3点上限、順序変更・削除、他者画像の取得拒否、編集期限後の変更拒否をTEST_PLAN.mdに沿って確認する。
+
+元画像はJPEG・PNG・GIF・BMPの20MB以下。GIFは静止画になる。HEIC・WebP・AVIF・TIFF・SVG・PDFは対象外。
+ブラウザーでPNG優先、容量が大きければ白背景JPEGへ変換し、長辺2,400px・1.5MB以内で送信する。
+画像追加前に未保存の入力を保存する。追加はその場で確定、削除・先頭への移動は「保存」で確定する。
+登録応答が不明なときは同じ登録要求を再試行するか、保存済みの内容を読み直す。
+1出店者の登録はUTC日付ごと30回・合計30MBまで。選択20MBと送信1.5MBの上限は別。
+Googleの変換割当・Drive容量等の上限にも影響される。
+
+削除や途中失敗の画像ファイルは非公開Driveに残る。自動物理削除は未実装。
+実験中はフォルダ容量を運営が確認し、Sheetsの参照と照合せずにファイルを削除しない。
+Googleの実変換・Drive権限・画像の向き／文字の見え方はローカル代替では確認できないため、必ず実環境で確認する。
+
+参考: [Blobの画像変換](https://developers.google.com/apps-script/reference/base/blob#getAs(String))、
+[Driveフォルダの操作と共有](https://developers.google.com/apps-script/reference/drive/folder)。
 
 ## ログイン復元変更の配置・確認
 

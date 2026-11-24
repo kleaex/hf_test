@@ -1,7 +1,13 @@
 function view_(record) {
   const state = json_(record.values[2]);
+  const config = config_();
   return { exhibitorId: record.values[0], eventId: record.values[1], revision: state.revision,
-    profile: state.profile, publications: state.publications, updatedAt: state.updatedAt };
+    profile: state.profile, publications: state.publications.map(function (book) {
+      return Object.assign({}, book, { images: (book.images || []).map(function (image) {
+        return { id: image.id, contentType: image.contentType, bytes: image.bytes, width: image.width, height: image.height };
+      }) });
+    }), updatedAt: state.updatedAt, editable: editing_(config).editable,
+    editDeadline: editing_(config).deadline, imagesConfigured: !!config.imageFolderId };
 }
 
 function text_(value, max, required) {
@@ -33,14 +39,20 @@ function saveProfile_(token, request) {
   if (!Array.isArray(request.publications) || request.publications.length > 10) fail_('VALIDATION', '頒布物は10点まで登録できます。');
   const ids = [];
   const publications = request.publications.map(function (book) {
-    keys_(book, ['id', 'title', 'author', 'description', 'price', 'releaseType']);
+    keys_(book, ['id', 'title', 'author', 'description', 'price', 'releaseType', 'imageIds']);
     if (book.id !== null && (typeof book.id !== 'string' || !/^pub_[a-f0-9]{32}$/.test(book.id))) fail_('VALIDATION', '頒布物IDが正しくありません。');
     if (book.id !== null && ids.indexOf(book.id) >= 0) fail_('VALIDATION', '同じ頒布物が重複しています。');
     if (book.id !== null) ids.push(book.id);
     if (!Number.isSafeInteger(book.price) || book.price < 0 || book.price > 1000000) fail_('VALIDATION', '価格は0〜1,000,000円の整数で入力してください。');
     if (['新刊', '既刊', 'その他'].indexOf(book.releaseType) < 0) fail_('VALIDATION', '刊行区分を選択してください。');
-    return { id: book.id, title: text_(book.title, 120, true), author: text_(book.author, 120, false),
+    if (book.imageIds !== undefined && (!Array.isArray(book.imageIds) || book.imageIds.length > 3
+        || book.imageIds.some(function (id, index) {
+          return typeof id !== 'string' || !/^img_[a-f0-9]{32}$/.test(id) || book.imageIds.indexOf(id) !== index;
+        }))) fail_('VALIDATION', '画像は重複せず3点まで指定してください。');
+    const result = { id: book.id, title: text_(book.title, 120, true), author: text_(book.author, 120, false),
       description: text_(book.description, 2000, false), price: book.price, releaseType: book.releaseType };
+    if (book.imageIds !== undefined) result.imageIds = book.imageIds;
+    return result;
   });
   const state = json_(context.record.values[2]);
   const fingerprint = digest_(context.config, 'save', JSON.stringify({ exhibitorId: request.exhibitorId,
@@ -50,8 +62,18 @@ function saveProfile_(token, request) {
     if (receipt.fingerprint !== fingerprint) fail_('REQUEST_REUSED', '同じ保存要求IDを別の内容には使用できません。');
     return { data: view_(context.record), replayed: true, savedRevision: receipt.revision };
   }
+  requireEditing_(context.config);
   if (state.revision !== request.revision) fail_('CONFLICT', '別の画面で更新されています。入力内容を控えてから保存済みの内容を読み直してください。');
   publications.forEach(function (book) {
+    const saved = state.publications.find(function (item) { return item.id === book.id; });
+    const existingImages = saved && saved.images || [];
+    const imageIds = book.imageIds === undefined ? existingImages.map(function (image) { return image.id; }) : book.imageIds;
+    book.images = imageIds.map(function (id) {
+      const image = existingImages.find(function (item) { return item.id === id; });
+      if (!image) fail_('FORBIDDEN', 'この作品に属さない画像は指定できません。');
+      return image;
+    });
+    delete book.imageIds;
     if (book.id === null) book.id = 'pub_' + random_(context.config, 'publication').slice(0, 32);
     else if (!state.publications.some(function (saved) { return saved.id === book.id; })) {
       fail_('FORBIDDEN', 'この出店者に属さない頒布物は保存できません。');
@@ -59,6 +81,7 @@ function saveProfile_(token, request) {
   });
   const revision = state.revision + 1;
   const next = { revision: revision, profile: profile, publications: publications, updatedAt: Date.now(),
+    imageBudget: state.imageBudget || {},
     receipts: state.receipts.concat([{ id: request.requestId, fingerprint: fingerprint,
       revision: revision, userId: context.user.values[0], savedAt: Date.now() }]).slice(-20) };
   const serialized = JSON.stringify(next);

@@ -6,8 +6,11 @@ function doGet() {
 function getSystemStatus() {
   return api_(function () {
     return locked_(function () {
-      database_(config_());
-      return { environment: 'experiment', storageConnected: true, authenticationImplemented: true };
+      const config = config_();
+      database_(config);
+      if (config.imageFolderId) imageFolder_(config);
+      return { environment: 'experiment', storageConnected: true, authenticationImplemented: true,
+        imagesConfigured: !!config.imageFolderId, editable: editing_(config).editable };
     });
   });
 }
@@ -28,6 +31,14 @@ function getMyProfile(token) {
 
 function saveProfile(token, request) {
   return api_(function () { return locked_(function () { return saveProfile_(token, request); }); });
+}
+
+function uploadPublicationImage(token, request) {
+  return api_(function () { return locked_(function () { return uploadImage_(token, request); }); });
+}
+
+function getPublicationImage(token, imageId) {
+  return api_(function () { return locked_(function () { return readImage_(token, imageId); }); });
 }
 
 function logout(token) {

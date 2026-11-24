@@ -25,7 +25,19 @@ function config_() {
     fail_('NOT_CONFIGURED', '実験環境の設定が完了していません。運営に確認してください。');
   }
   return { properties: properties, spreadsheetId: values.HF_SPREADSHEET_ID,
-    eventId: values.HF_EVENT_ID, secret: values.HF_AUTH_SECRET, emails: emails.map(email_) };
+    eventId: values.HF_EVENT_ID, secret: values.HF_AUTH_SECRET, emails: emails.map(email_),
+    imageFolderId: values.HF_IMAGE_FOLDER_ID || '', editDeadline: values.HF_EDIT_DEADLINE || '' };
+}
+
+function editing_(config) {
+  const configured = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/.test(config.editDeadline);
+  const deadline = configured ? Date.parse(config.editDeadline) : NaN;
+  return { editable: Number.isFinite(deadline) && Date.now() < deadline,
+    deadline: Number.isFinite(deadline) ? deadline : null };
+}
+
+function requireEditing_(config) {
+  if (!editing_(config).editable) fail_('EDIT_CLOSED', 'カタログの編集期間外です。変更・削除はできません。');
 }
 
 function database_(config) {
