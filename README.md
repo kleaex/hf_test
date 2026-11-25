@@ -14,13 +14,17 @@ KLEAの既存サイト・KHBとは独立した試作です。実際の申込者�
 - 同じタブの再読み込み時、GASで再検証してログインと保存済み内容を復元
 - JPEG・PNG・GIF・BMPの画像選択と調整、1作品3点までの非公開Drive保存・本人限定表示
 - 画像の並べ替え・削除、編集期限終了後の変更・削除の拒否
+- 運営が選択した出店者の公開用JSON・画像をZIPへ書き出し、ローカルで確認・反映・切り戻し
+- 公開カタログの代表画像と補足・試し読み画像の表示
+- 運営専用ログイン、開催設定・配置・公開対象の管理、公開前確認、ZIP書き出し・履歴
 
 上記GAS機能はローカルの代替サービスによる自動テスト済みです。
 Google上の実験環境は作成済みで、接続確認・認証・編集権限確認までユーザーが実施しています（2026-11-24）。
 既存機能のテストもユーザー確認済みとの報告があります。具体的な試験内訳はdesign/TEST_PLAN.mdを参照してください。
-ログイン復元もユーザー確認済みです。今回追加した画像・編集期限はGoogle上での確認が必要です。
-申込受付、共同編集、次回開催へのコピー、公開同期は未実装です。
-設定・本人確認・所属検証を通らない保存は拒否します。静的カタログは引き続きサンプルJSONを読みます。
+ログイン復元と画像機能もユーザー確認済みです。
+公開版の書き出し・取り込みと運営画面はローカル自動テスト済みで、実GAS・GitHub Pagesへの反映確認は未実施です。
+申込受付、共同編集、次回開催へのコピー、自動公開同期は未実装です。
+設定・本人確認・所属検証を通らない保存は拒否します。公開版を取り込むまではサンプルJSONを表示します。
 
 ## ローカル確認
 Node.jsがある環境で、このrepo内から実行します。追加パッケージのインストールは不要です。
@@ -50,7 +54,7 @@ GAS設定手順は design/SETUP.md、検証項目は design/TEST_PLAN.md を参�
 
 追加パッケージは不要です。Googleサービスを代替するテストで、実メールは送信しません。
 
-    node --test tests/gas.test.mjs tests/session.test.mjs tests/images.test.mjs
+    node --test tests/gas.test.mjs tests/session.test.mjs tests/images.test.mjs tests/publishing.test.mjs tests/admin.test.mjs
 
 編集画面を模擬環境で操作する場合は次を実行し、http://127.0.0.1:8081/ を開きます。
 
@@ -59,6 +63,19 @@ GAS設定手順は design/SETUP.md、検証項目は design/TEST_PLAN.md を参�
 画面上部に模擬メールの確認コードが表示されます。これはローカル専用の検証機能です。
 tests/ をGASやPagesに配置しないでください。実環境の確認とは区別します。
 模擬環境はGoogleの画像デコーダーとDriveを代替するため、実変換・権限の証明にはなりません。
+模擬運営画面は http://127.0.0.1:8081/?view=admin 。テスト宛先はops@example.invalidです。
+
+## 運営画面
+
+実際のGAS WebアプリのURLに `?view=admin` を付けて開きます。
+出店者用とは別のメール確認・1時間セッションで、運営として登録した利用者だけが使えます。
+現在の1開催回のカタログ名・開催日・会場・編集期限、ブース番号と公開対象、公開前確認・ZIP書き出し履歴を管理します。
+
+初回のみHF_ADMIN_EMAILSを設定し、setupAdminConsole_を一時関数経由で実行します。
+Admins・AdminSessions・EventSettingsが作られ、旧HF_PUBLICATION_CONFIG_JSON・HF_EDIT_DEADLINEから初期値を移行します。
+以降、日常の設定は運営画面から保存し、Script Propertiesの公開設定JSONを手編集する必要はありません。
+移行済みの設定は再初期化で上書きしません。出店者の既存データ・セッションは保持します。
+反映する全ファイルと初回手順はdesign/SETUP.md「運営画面を既存環境へ追加する」を参照してください。
 
 ## 画像機能を既存GASへ反映する
 
@@ -67,3 +84,19 @@ Script PropertiesにHF_IMAGE_FOLDER_IDとHF_EDIT_DEADLINEを設定し、Drive権
 新しいバージョンへデプロイします。Sheetsの再初期化は不要です。
 編集期限が未設定の場合は、プロフィールを含めて読取専用になります。
 具体的な設定値・更新手順はdesign/SETUP.mdを参照してください。
+
+## 登録内容を公開カタログへ反映する
+
+1. 運営画面に必要なGASファイル一式を反映し、運営宛先の初回登録を行う。
+2. 運営画面で開催設定・公開対象を保存し、公開前確認を経てZIPを書き出す。
+3. ZIPをrepo内のtmp/へ展開し、次のコマンドで確認用カタログを作る。
+
+       node scripts/install-catalog.mjs tmp/catalog-export
+
+4. 表示された配置先を `node scripts/serve.mjs <配置先>` で開いて確認する。
+5. 確認した同じ展開先を `node scripts/install-catalog.mjs tmp/catalog-export --apply` でdocs/へ反映する。
+6. docs/の変更と版ディレクトリをコミット・pushし、Pagesの配信完了を確認する。
+
+書き出し・確認用作成だけでは一般公開されません。画像元ファイルや書出し先Driveを共有する必要はありません。
+HF_EXPORT_FOLDER_IDは引き続きScript Propertiesへ設定します。DriveのZIPは保存先の所有者アカウントで取得します。
+GAS・ローカルそれぞれの反映ファイル一覧、設定例、切り戻しはdesign/SETUP.mdを参照してください。

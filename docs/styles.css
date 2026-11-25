@@ -13,4 +13,5 @@ select{appearance:none;padding-right:2.5rem;background-image:linear-gradient(45d
 .book{border-top:1px solid #d1ded6;padding-top:1rem;display:grid;grid-template-columns:90px 1fr;gap:1rem}.book h4{margin:0;font-size:1.1rem}
 .cover{background:#eaf0ed;min-height:125px;display:flex;align-items:center;justify-content:center;color:#547164;text-align:center;font-size:.875rem;padding:.5rem}.book p{margin:.3rem 0}.meta{color:#547164;font-size:.9rem}
 footer{border-top:1px solid #d1ded6;color:#547164;font-size:.9rem}
+.book>*{min-width:0}.image-link{display:flex;text-decoration:none;align-self:start}.image-link img{display:block;width:100%;height:auto;max-height:180px;object-fit:contain}.book-images{margin-top:.75rem}.book-images summary{cursor:pointer;font-size:.9rem}.image-gallery{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}.image-gallery .image-link{width:95px}#publicationInfo{overflow-wrap:anywhere}.exhibitor p,.book p,.book h4{overflow-wrap:anywhere;white-space:pre-wrap}
 @media(max-width:640px){header,main,footer{padding:1.25rem}header{padding-top:2rem}.books{grid-template-columns:1fr}.exhibitor{padding:1rem}}

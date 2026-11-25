@@ -7,6 +7,11 @@ function requestCode_(input) {
   const user = one_(db.Users, 1, email);
   if (!user || !active_(user.values[2])) return response;
   membership_(db, user.values[0]);
+  return sendChallenge_(config, db.Users, user, email);
+}
+
+function sendChallenge_(config, sheet, user, email, codePurpose) {
+  const response = { message: '登録済みのテスト宛先には確認コードを送信します。届かない場合は、時間をおいて運営に確認してください。' };
   const now = Date.now();
   const auth = json_(user.values[3]);
   if (auth.lastSentAt && now - auth.lastSentAt < 60000) return response;
@@ -23,25 +28,25 @@ function requestCode_(input) {
   const code = ('000000' + (parseInt(random_(config, 'code').slice(0, 12), 16) % 1000000)).slice(-6);
   auth.lastSentAt = now;
   auth.sendCount = (auth.sendCount || 0) + 1;
-  auth.challenge = { hash: digest_(config, 'code:' + user.values[0] + ':' + email, code),
+  auth.challenge = { hash: digest_(config, codePurpose || 'code:' + user.values[0] + ':' + email, code),
     expiresAt: now + 600000, attempts: 0, used: false, status: 'pending' };
   budget.count = (budget.count || 0) + 1;
   config.properties.setProperty('HF_MAIL_BUDGET', JSON.stringify(budget));
   const values = user.values.slice();
   values[3] = JSON.stringify(auth);
-  writeRow_(db.Users, user.row, values);
+  writeRow_(sheet, user.row, values);
   try {
-    MailApp.sendEmail({ to: email, subject: '【実験用】出店者編集の確認コード',
+    MailApp.sendEmail({ to: email, subject: codePurpose ? '【実験用】運営画面の確認コード' : '【実験用】出店者編集の確認コード',
       body: '確認コード: ' + code + '\n有効期限は10分、入力は5回までです。\n心当たりがなければ、このメールを破棄してください。' });
   } catch (_) {
     auth.challenge.status = 'failed';
     values[3] = JSON.stringify(auth);
-    writeRow_(db.Users, user.row, values);
+    writeRow_(sheet, user.row, values);
     return response;
   }
   auth.challenge.status = 'ready';
   values[3] = JSON.stringify(auth);
-  writeRow_(db.Users, user.row, values);
+  writeRow_(sheet, user.row, values);
   return response;
 }
 

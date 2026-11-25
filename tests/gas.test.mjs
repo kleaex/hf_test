@@ -202,7 +202,8 @@ test('公開入口を限定し、内部・初期設定関数はすべて末尾 _
     const source = fs.readFileSync(new URL('../gas/' + file, import.meta.url), 'utf8');
     for (const match of source.matchAll(/^function (\w+)\(/gm)) if (!match[1].endsWith('_')) publicFunctions.push(match[1]);
   }
-  assert.deepEqual(publicFunctions.sort(), ['doGet', 'getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'logout', 'uploadPublicationImage', 'getPublicationImage'].sort());
+  assert.deepEqual(publicFunctions.sort(), ['doGet', 'getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'logout', 'uploadPublicationImage', 'getPublicationImage',
+    'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'previewAdminCatalog', 'exportAdminCatalog', 'getAdminImage', 'logoutAdmin'].sort());
 });
 
 test('編集画面のJavaScript構文とGASマニフェストを読み込める', () => {

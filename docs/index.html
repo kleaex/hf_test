@@ -6,16 +6,18 @@
   <meta name="description" content="文芸同人誌即売会システムの実験用カタログ。すべて架空の情報です。">
   <title>文芸の小さな市｜実験カタログ</title>
   <link rel="stylesheet" href="./styles.css">
-  <script src="./app.js" defer></script>
+  <script src="./app.js" type="module"></script>
 </head>
 <body>
-  <header><p class="eyebrow">KLEA / EXPERIMENT</p><h1>文芸の小さな市</h1>
+  <header><p class="eyebrow">KLEA / EXPERIMENT</p><h1 id="eventTitle">文芸の小さな市</h1>
     <p>俳句と短歌、本をつくる人に出会うカタログ。</p>
-    <p class="notice">実験用：掲載情報はすべて架空です。開催・出店募集は行っていません。</p>
+    <p id="catalogNotice" class="notice">実験用：掲載情報はすべて架空です。開催・出店募集は行っていません。</p>
   </header>
   <main>
     <section aria-labelledby="catalog-title">
       <div class="section-heading"><h2 id="catalog-title">出店者と頒布物</h2><p>気になる言葉から、本を探す。</p></div>
+      <p id="publicationInfo" class="meta"></p>
+      <p id="eventInfo" class="meta"></p>
       <div class="filters">
         <label for="search">キーワード<input id="search" type="search" placeholder="出店名・作品名・紹介文" maxlength="200"></label>
         <label for="genre">ジャンル<select id="genre"><option value="">すべて</option></select></label>
@@ -24,6 +26,6 @@
       <div id="catalog" class="catalog"></div>
     </section>
   </main>
-  <footer>実験段階：申込・ログイン・編集機能は準備中です。</footer>
+  <footer>実験段階：公開情報は運営が確認して手動で反映します。出店申込は受け付けていません。</footer>
 </body>
 </html>

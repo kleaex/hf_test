@@ -1,6 +1,7 @@
 /** 実験用Webアプリ。公開入口はこのファイルだけ。 */
-function doGet() {
-  return HtmlService.createHtmlOutputFromFile('Index').setTitle('出店者編集（実験用）');
+function doGet(event) {
+  const admin = event && event.parameter && event.parameter.view === 'admin';
+  return HtmlService.createHtmlOutputFromFile(admin ? 'AdminIndex' : 'Index').setTitle(admin ? '運営画面（実験用）' : '出店者編集（実験用）');
 }
 
 function getSystemStatus() {
@@ -51,6 +52,43 @@ function logout(token) {
       return {};
     });
   });
+}
+
+function requestAdminLoginCode(email) {
+  return api_(function () { return locked_(function () { return requestAdminCode_(email); }); });
+}
+
+function verifyAdminLoginCode(email, code) {
+  return api_(function () { return locked_(function () { return verifyAdminCode_(email, code); }); });
+}
+
+function getAdminDashboard(token) {
+  return api_(function () { return locked_(function () { return { data: adminDashboard_(authenticateAdmin_(token)) }; }); });
+}
+
+function saveAdminEvent(token, request) {
+  return api_(function () { return locked_(function () { return saveAdminEvent_(token, request); }); });
+}
+
+function previewAdminCatalog(token) {
+  return api_(function () { return locked_(function () { return previewAdminCatalog_(token); }); });
+}
+
+function exportAdminCatalog(token, request) {
+  return api_(function () { return locked_(function () { return exportAdminCatalog_(token, request); }); });
+}
+
+function getAdminImage(token, imageId) {
+  return api_(function () { return locked_(function () { return readAdminImage_(token, imageId); }); });
+}
+
+function logoutAdmin(token) {
+  return api_(function () { return locked_(function () {
+    const context = authenticateAdmin_(token);
+    const values = context.session.values.slice(); values[4] = Date.now();
+    writeRow_(context.adminDb.AdminSessions, context.session.row, values);
+    return {};
+  }); });
 }
 
 function api_(operation) {

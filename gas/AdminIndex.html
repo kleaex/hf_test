@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>運営画面（実験用）</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f5f7f5;color:#20372d;font-family:sans-serif;line-height:1.7}
+    main{max-width:1100px;margin:2rem auto;padding:0 1rem 3rem}h1{font-size:1.8rem}h2{font-size:1.3rem}h3{font-size:1.1rem}
+    section,.panel{background:white;border:1px solid #c6d2ca;border-radius:6px;padding:1.25rem;margin:1rem 0}
+    label{display:block;font-weight:bold;margin:.8rem 0 .3rem}input,textarea,button{font:inherit}input:not([type=checkbox]){display:block;width:100%;padding:.6rem;border:1px solid #7d9184;border-radius:4px;color:inherit;background:white}
+    input[type=checkbox]{width:1.2rem;height:1.2rem;vertical-align:middle}button,.file-link{padding:.6rem 1rem;border:1px solid #375e49;border-radius:4px;background:white;color:#254e37;cursor:pointer}
+    .primary{background:#254e37;color:white}button:disabled{opacity:.5;cursor:default}.actions{display:flex;flex-wrap:wrap;gap:.6rem;margin:1rem 0}.note{font-size:.9rem;color:#52665a}
+    #result{border-left:4px solid #375e49;padding:.8rem;overflow-wrap:anywhere}#result:empty{display:none}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 1rem}
+    table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{border-bottom:1px solid #d0d9d2;padding:.7rem;text-align:left;vertical-align:top}td:nth-child(2){overflow-wrap:anywhere}.table-wrap{overflow-x:auto}caption{text-align:left;font-weight:bold}
+    fieldset{border:0;margin:0;padding:0;min-width:0}.preview-exhibitor{border-top:2px solid #809985;padding:1rem 0}.preview-book{border-top:1px solid #d0d9d2;padding:.7rem 0}.preview-book p{white-space:pre-wrap;overflow-wrap:anywhere}
+    .preview-image{max-width:100%;max-height:360px;display:block;margin:.5rem 0}.history-item{border-top:1px solid #d0d9d2;padding:1rem 0;overflow-wrap:anywhere}.file-link{display:inline-block;text-decoration:none}
+    [hidden]{display:none!important}:focus-visible{outline:3px solid #b36b12;outline-offset:3px}@media(max-width:640px){.form-grid{grid-template-columns:1fr}section{padding:1rem}main{margin:1rem auto}th,td{padding:.5rem}}
+  </style>
+</head>
+<body>
+<main>
+  <header><h1>運営画面 <small>実験用</small></h1><p>開催設定・配置・公開対象を管理し、確認した内容を公開用ZIPへ書き出します。</p></header>
+  <p id="result" role="status" aria-live="polite"></p>
+  <p id="storageNotice" class="note" hidden>このブラウザーではログインを一時保存できません。再読み込み後は再ログインしてください。</p>
+  <button id="restore" type="button" hidden>ログインの復元を再試行</button>
+  <section id="login">
+    <h2>運営としてログイン</h2>
+    <p class="note">出店者用の確認コードは使えません。運営として登録した宛先を指定してください。</p>
+    <form id="emailForm"><label for="email">運営のメールアドレス</label><input id="email" type="email" autocomplete="email" maxlength="254" required><div class="actions"><button type="submit">運営用コードを送信・再送</button></div></form>
+    <form id="codeForm"><label for="code">運営用確認コード（6桁）</label><input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required><div class="actions"><button class="primary" type="submit">運営画面へログイン</button></div></form>
+  </section>
+  <div id="dashboard" hidden>
+    <div class="actions"><button id="reload" type="button">保存済み設定を読み直す</button><button id="logout" type="button">ログアウト</button></div>
+    <p id="revision" class="note"></p>
+    <section>
+      <h2>開催設定・配置</h2>
+      <form id="eventForm">
+        <fieldset id="fields">
+          <label for="title">カタログ名（必須）</label><input id="title" maxlength="120" required>
+          <div class="form-grid"><div><label for="eventDate">開催日</label><input id="eventDate" type="date"></div><div><label for="venue">会場</label><input id="venue" maxlength="200"></div></div>
+          <label for="deadline">出店者の編集終了日時（日本時間）</label><input id="deadline" type="datetime-local" step="1">
+          <p class="note">空欄・期限終了後は出店者の編集を停止します。変更は設定保存後に有効です。</p>
+          <div class="table-wrap"><table><caption>出店者と公開対象</caption><thead><tr><th>公開</th><th>出店者</th><th>作品・画像</th><th>ブース番号</th></tr></thead><tbody id="exhibitors"></tbody></table></div>
+          <p class="note">チェックした出店者の保存済みプロフィール・全作品・登録画像を対象にします。ブース番号が空なら「配置未定」です。</p>
+        </fieldset>
+        <div class="actions"><button id="save" class="primary" type="submit">設定を保存</button></div>
+      </form>
+    </section>
+    <section>
+      <h2>公開前の確認</h2>
+      <p>設定を保存してからプレビューを作成します。プレビュー確認後に内容が更新された場合は再確認が必要です。</p>
+      <button id="preview" type="button">保存済みの公開内容を確認</button>
+      <div id="previewPanel" hidden>
+        <p id="previewInfo" class="note"></p><div id="previewContent"></div>
+        <label><input id="confirmPreview" type="checkbox"> 掲載内容と公開対象を確認しました</label>
+        <div class="actions"><button id="export" class="primary" type="button">確認した内容をZIPへ書き出す</button></div>
+      </div>
+      <p class="note">ZIPを書き出すだけでは一般公開されません。ダウンロード後にローカル確認・反映・GitHub Pagesへの配信を行います。</p>
+    </section>
+    <section><h2>書き出し履歴</h2><p class="note">直近20件。Driveのリンクは、保存先を所有する運営のGoogleアカウントで開いてください。</p><div id="history"></div></section>
+  </div>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const SESSION_KEY = 'hf_test.adminSession.v1';
+let token = null, data = null, dirty = false, busy = false, pendingSave = null, pendingExport = null, preview = null;
+function message(text) { $('result').textContent = text; }
+function persist(value) {
+  try { if (value) window.sessionStorage.setItem(SESSION_KEY, value); else window.sessionStorage.removeItem(SESSION_KEY); }
+  catch (_) { $('storageNotice').hidden = false; }
+}
+function controls() {
+  const pending = !!pendingSave || !!pendingExport;
+  $('fields').disabled = busy || pending;
+  $('save').disabled = busy || !!pendingExport;
+  $('save').textContent = pendingSave ? '同じ設定保存を再試行・結果確認' : '設定を保存';
+  $('preview').disabled = busy || dirty || pending;
+  $('export').disabled = busy || !preview || !$('confirmPreview').checked || dirty || !!pendingSave;
+  $('confirmPreview').disabled = busy || !!pendingExport;
+  $('export').textContent = pendingExport ? '同じ書き出しを再試行・結果確認' : '確認した内容をZIPへ書き出す';
+  for (const id of ['reload', 'logout', 'restore']) $(id).disabled = busy;
+  for (const element of document.querySelectorAll('#login input, #login button')) element.disabled = busy;
+}
+function rpc(name, ...args) {
+  return new Promise((resolve, reject) => {
+    if (!window.google || !google.script || !google.script.run) { reject({ network: true, message: 'GASの運営画面URLから開いてください。' }); return; }
+    google.script.run.withSuccessHandler(result => {
+      if (result && result.ok) resolve(result);
+      else { const error = result && result.error || { code: 'UNAVAILABLE', message: '応答を確認できませんでした。' }; if (error.code === 'UNAUTHENTICATED') persist(null); reject(error); }
+    }).withFailureHandler(() => reject({ network: true, message: '通信結果を確認できませんでした。' }))[name](...args);
+  });
+}
+async function action(operation) {
+  if (busy) return; busy = true; controls();
+  try { await operation(); } catch (error) { message(error.message || '処理を完了できませんでした。'); }
+  finally { busy = false; controls(); }
+}
+function element(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
+function clearPreview() { preview = null; $('previewPanel').hidden = true; $('previewContent').replaceChildren(); $('confirmPreview').checked = false; }
+function renderHistory(releases) {
+  $('history').replaceChildren();
+  if (!releases.length) { $('history').append(element('p', 'まだ書き出し履歴がありません。')); return; }
+  releases.forEach(release => {
+    const item = element('div', undefined, 'history-item');
+    item.append(element('p', release.releaseId), element('p', new Date(release.createdAt).toLocaleString('ja-JP') + ' ／ ' + release.exhibitorCount + '組・画像' + release.imageCount + '点'));
+    if (typeof release.fileUrl === 'string' && /^https:\/\/drive\.google\.com\/file\/d\/[A-Za-z0-9_%.-]+\/view$/.test(release.fileUrl)) {
+      const link = element('a', 'DriveでZIPを開く', 'file-link'); link.href = release.fileUrl; link.target = '_blank'; link.rel = 'noopener noreferrer'; item.append(link);
+    }
+    $('history').append(item);
+  });
+}
+function render(next) {
+  data = next; dirty = false; pendingSave = null; pendingExport = null; clearPreview();
+  $('title').value = data.title; $('eventDate').value = data.eventDate; $('venue').value = data.venue;
+  $('deadline').value = data.editDeadline && Number.isFinite(Date.parse(data.editDeadline)) ? new Date(Date.parse(data.editDeadline) + 9 * 3600000).toISOString().slice(0, 19) : '';
+  $('revision').textContent = '開催回 ' + data.eventId + ' ／ 設定更新番号 ' + data.revision;
+  $('exhibitors').replaceChildren();
+  data.exhibitors.forEach(exhibitor => {
+    const row = element('tr'); row.dataset.id = exhibitor.exhibitorId;
+    const selectCell = element('td'); const select = element('input'); select.type = 'checkbox'; select.checked = exhibitor.publish; select.dataset.key = 'publish'; select.setAttribute('aria-label', exhibitor.name + 'を公開対象にする'); selectCell.append(select);
+    const name = element('td'); name.append(element('strong', exhibitor.name), element('div', exhibitor.exhibitorId, 'note'));
+    const boothCell = element('td'); const booth = element('input'); booth.value = exhibitor.booth; booth.maxLength = 40; booth.dataset.key = 'booth'; booth.setAttribute('aria-label', exhibitor.name + 'のブース番号'); boothCell.append(booth);
+    row.append(selectCell, name, element('td', exhibitor.publicationCount + '作品 ／ ' + exhibitor.imageCount + '点'), boothCell); $('exhibitors').append(row);
+  });
+  renderHistory(data.releases); $('login').hidden = true; $('dashboard').hidden = false; $('restore').hidden = true; controls();
+}
+function saveRequest() {
+  const deadline = $('deadline').value;
+  return { revision: data.revision, requestId: crypto.randomUUID(), title: $('title').value, eventDate: $('eventDate').value,
+    venue: $('venue').value, editDeadline: deadline ? (deadline.length === 16 ? deadline + ':00' : deadline) + '+09:00' : '',
+    exhibitors: Array.from($('exhibitors').children, row => {
+      const values = { exhibitorId: row.dataset.id };
+      for (const input of row.querySelectorAll('[data-key]')) values[input.dataset.key] = input.dataset.key === 'publish' ? input.checked : input.value;
+      return values;
+    }) };
+}
+async function restore() {
+  let saved;
+  try { saved = window.sessionStorage.getItem(SESSION_KEY); } catch (_) { $('storageNotice').hidden = false; return; }
+  if (!saved) return;
+  if (!/^[a-f0-9]{64}$/.test(saved)) { persist(null); return; }
+  $('restore').hidden = true; message('運営ログインを確認しています。');
+  try { const result = await rpc('getAdminDashboard', saved); token = saved; render(result.data); message('運営ログインを復元しました。'); }
+  catch (error) {
+    if (error.code === 'UNAUTHENTICATED') { persist(null); message('運営として再ログインしてください。'); }
+    else { $('restore').hidden = false; message('ログインを確認できませんでした。復元を再試行してください。'); }
+  }
+}
+$('restore').addEventListener('click', () => action(restore));
+$('emailForm').addEventListener('submit', event => { event.preventDefault(); action(async () => { const result = await rpc('requestAdminLoginCode', $('email').value); $('code').value = ''; message(result.message); }); });
+$('codeForm').addEventListener('submit', event => {
+  event.preventDefault(); if (!$('emailForm').reportValidity()) return;
+  action(async () => { const result = await rpc('verifyAdminLoginCode', $('email').value, $('code').value); token = result.token; persist(token); $('code').value = ''; $('email').value = ''; render(result.data); message('運営としてログインしました。有効期限は1時間です。'); });
+});
+function changed() { dirty = true; clearPreview(); controls(); }
+$('fields').addEventListener('input', changed); $('fields').addEventListener('change', changed);
+$('eventForm').addEventListener('submit', event => {
+  event.preventDefault(); action(async () => {
+    if (!pendingSave) {
+      const request = saveRequest();
+      if (data.editDeadline && Date.parse(data.editDeadline) <= Date.now() && Date.parse(request.editDeadline) > Date.now()
+          && !confirm('終了済みの出店者編集を再開しますか？')) return;
+      pendingSave = request;
+    }
+    controls();
+    try { const result = await rpc('saveAdminEvent', token, pendingSave); render(result.data); message(result.replayed ? '設定が保存済みであることを確認しました。' : '設定を保存しました。公開ページへの反映はまだです。'); }
+    catch (error) {
+      if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) message('保存結果が未確認です。同じ設定保存を再試行してください。');
+      else { pendingSave = null; message(error.message); }
+    }
+  });
+});
+$('preview').addEventListener('click', () => action(async () => {
+  if (dirty || pendingSave || pendingExport) return;
+  clearPreview();
+  const result = await rpc('previewAdminCatalog', token); preview = result; $('confirmPreview').checked = false; $('previewContent').replaceChildren();
+  const catalog = result.catalog;
+  $('previewContent').append(element('h3', catalog.title), element('p', [catalog.eventDate, catalog.venue].filter(Boolean).join(' ／ ')));
+  catalog.exhibitors.forEach(exhibitor => {
+    const section = element('div', undefined, 'preview-exhibitor'); section.append(element('h3', exhibitor.name), element('p', exhibitor.booth || '配置未定'), element('p', exhibitor.description));
+    exhibitor.publications.forEach(book => {
+      const item = element('div', undefined, 'preview-book'); item.append(element('h3', book.title), element('p', book.author), element('p', book.price + '円 ／ ' + book.releaseType), element('p', book.description));
+      book.images.forEach((image, index) => {
+        const id = typeof image.src === 'string' && image.src.match(/\/(img_[a-f0-9]{32})\.(png|jpg)$/);
+        if (!id) return;
+        const show = element('button', '画像' + (index + 1) + 'を確認'); show.type = 'button';
+        const img = element('img'); img.alt = book.title + 'の画像' + (index + 1); img.className = 'preview-image'; img.hidden = true;
+        show.addEventListener('click', () => action(async () => { const result = await rpc('getAdminImage', token, id[1]); if (!['image/png', 'image/jpeg'].includes(result.contentType)) throw new Error('画像形式が不正です。'); img.src = 'data:' + result.contentType + ';base64,' + result.base64; img.hidden = false; }));
+        item.append(show, img);
+      }); section.append(item);
+    }); $('previewContent').append(section);
+  });
+  $('previewInfo').textContent = '確認期限: ' + new Date(result.expiresAt).toLocaleString('ja-JP') + ' ／ 確認後に内容が変わった場合は再確認が必要です。';
+  $('previewPanel').hidden = false; message('公開する内容を確認してください。まだ書き出していません。');
+}));
+$('confirmPreview').addEventListener('change', controls);
+$('export').addEventListener('click', () => action(async () => {
+  if (!preview || !$('confirmPreview').checked || dirty) return;
+  if (!pendingExport) pendingExport = { previewId: preview.previewId, requestId: crypto.randomUUID() };
+  controls();
+  try {
+    const result = await rpc('exportAdminCatalog', token, pendingExport); pendingExport = null;
+    data.releases = [result.release, ...data.releases.filter(item => item.releaseId !== result.release.releaseId)].slice(0, 20); renderHistory(data.releases); clearPreview();
+    message('公開用ZIPを書き出しました。履歴のDriveリンクから取得し、ローカル確認・反映へ進んでください。');
+  } catch (error) {
+    if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) message('書き出し結果が未確認です。同じ書き出しを再試行してください。');
+    else { pendingExport = null; if (error.code === 'PREVIEW_STALE') clearPreview(); message(error.message); }
+  }
+}));
+$('reload').addEventListener('click', () => {
+  if ((dirty || pendingSave || pendingExport) && !confirm('未保存の入力を破棄して保存済み設定を読み直しますか？')) return;
+  action(async () => { const result = await rpc('getAdminDashboard', token); render(result.data); message('保存済み設定と履歴を読み込みました。'); });
+});
+$('logout').addEventListener('click', () => {
+  if ((dirty || pendingSave || pendingExport) && !confirm('未保存の入力を破棄してログアウトしますか？')) return;
+  action(async () => {
+    try { await rpc('logoutAdmin', token); } catch (error) { if (error.code !== 'UNAUTHENTICATED') throw error; }
+    token = null; data = null; dirty = false; pendingSave = null; pendingExport = null; persist(null); clearPreview(); $('eventForm').reset(); $('exhibitors').replaceChildren(); $('history').replaceChildren(); $('dashboard').hidden = true; $('login').hidden = false; message('運営画面からログアウトしました。');
+  });
+});
+window.addEventListener('beforeunload', event => { if (dirty || pendingSave || pendingExport) { event.preventDefault(); event.returnValue = ''; } });
+controls(); action(restore);
+</script>
+</body>
+</html>

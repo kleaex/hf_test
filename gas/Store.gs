@@ -24,9 +24,12 @@ function config_() {
       || emails.some(function (email) { return !email_(email); })) {
     fail_('NOT_CONFIGURED', '実験環境の設定が完了していません。運営に確認してください。');
   }
-  return { properties: properties, spreadsheetId: values.HF_SPREADSHEET_ID,
+  const config = { properties: properties, spreadsheetId: values.HF_SPREADSHEET_ID,
     eventId: values.HF_EVENT_ID, secret: values.HF_AUTH_SECRET, emails: emails.map(email_),
     imageFolderId: values.HF_IMAGE_FOLDER_ID || '', editDeadline: values.HF_EDIT_DEADLINE || '' };
+  const settings = eventRecord_(config, false);
+  if (settings) config.editDeadline = settings.state.editDeadline;
+  return config;
 }
 
 function editing_(config) {
@@ -58,7 +61,7 @@ function database_(config) {
 function rows_(sheet) {
   const count = sheet.getLastRow() - 1;
   if (!count) return [];
-  return sheet.getRange(2, 1, count, HF_SCHEMA_[sheet.getName()].length).getValues()
+  return sheet.getRange(2, 1, count, (HF_SCHEMA_[sheet.getName()] || HF_ADMIN_SCHEMA_[sheet.getName()]).length).getValues()
     .map(function (values, index) { return { row: index + 2, values: values }; });
 }
 

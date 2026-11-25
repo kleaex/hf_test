@@ -171,12 +171,16 @@ function readImage_(token, imageId) {
     (book.images || []).forEach(function (item) { if (item.id === imageId) image = item; });
   });
   if (!image) fail_('FORBIDDEN', 'この出店者に属さない画像は取得できません。');
-  const folder = imageFolder_(context.config);
+  return { contentType: image.contentType, base64: Utilities.base64Encode(storedImageBytes_(context.config, image)) };
+}
+
+function storedImageBytes_(config, image) {
+  const folder = imageFolder_(config);
   const file = DriveApp.getFileById(image.fileId);
   privateDriveItem_(file);
   const parents = file.getParents();
   if (!parents.hasNext() || parents.next().getId() !== folder.getId() || parents.hasNext()) fail_('IMAGE_CONFIG', '画像の保存先が一致しません。');
   const bytes = file.getBlob().getBytes();
-  if (bytes.length !== image.bytes || digest_(context.config, 'image-bytes', Utilities.base64Encode(bytes)) !== image.hash) fail_('IMAGE_INVALID', '保存画像の内容が一致しません。');
-  return { contentType: image.contentType, base64: Utilities.base64Encode(bytes) };
+  if (bytes.length !== image.bytes || digest_(config, 'image-bytes', Utilities.base64Encode(bytes)) !== image.hash) fail_('IMAGE_INVALID', '保存画像の内容が一致しません。');
+  return bytes;
 }
