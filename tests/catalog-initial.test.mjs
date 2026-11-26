@@ -47,18 +47,24 @@ function imageFixture() {
   h.call('saveProfile', a.token, request); h.properties.HF_PERFORMANCE = 'true';
   return { h, id };
 }
-test('初期応答に公開済みの小画像1点を同梱し、Drive内部情報を出さない', () => {
-  const { h, id } = imageFixture(); const result = h.call('initialCatalog_');
-  assert.equal(result.ok, true); assert.equal(result.initialImages.length, 1);
-  assert.equal(result.initialImages[0].id, id); assert.equal(result.initialImages[0].base64, jpeg);
-  assert.ok(result.initialImages[0].base64.length <= 40000);
-  assert.equal(result.performance.stages.catalogPreview.count, 1);
+test('画像付きカタログの初期応答は本文だけを返し、Driveを読まない', () => {
+  const { h, id } = imageFixture(); h.state.driveReadLocks = [];
+  h.state.driveApiEnabled = true; h.state.driveApiCalls = [];
+  h.state.fileHandleReads = 0; h.state.folderHandleReads = 0;
+  const result = h.call('initialCatalog_');
+  assert.equal(result.ok, true); assert.equal(result.initialImages, undefined);
+  assert.equal(result.data.exhibitors[0].publications[0].images[0].id, id);
+  assert.equal(result.performance.stages.catalogPreview, undefined);
+  assert.equal(result.performance.stages.driveMetadata, undefined);
+  assert.equal(result.performance.stages.driveRead, undefined);
+  assert.equal(h.state.driveApiCalls.length, 0); assert.equal(h.state.driveReadLocks.length, 0);
+  assert.equal(h.state.fileHandleReads, 0); assert.equal(h.state.folderHandleReads, 0);
   assert.doesNotMatch(JSON.stringify(result), /fileId|"hash"|authJson|token|receipts|private_image_folder/);
 });
-test('同梱画像の非公開状態を確認できない場合もカタログ本文を返す', () => {
-  const { h } = imageFixture(); h.state.folderShared = true;
+test('Driveが利用できなくてもカタログ本文を返す', () => {
+  const { h } = imageFixture(); h.state.driveFails = true; h.state.driveApiEnabled = true; h.state.driveApiFails = true;
   const result = h.call('initialCatalog_'); assert.equal(result.ok, true);
-  assert.equal(result.data.exhibitors.length, 1); assert.equal(result.initialImages.length, 0);
+  assert.equal(result.data.exhibitors.length, 1); assert.equal(result.initialImages, undefined);
 });
 test('旧画像・大きな小画像を同梱せず、初期応答を重くしない', () => {
   for (const kind of ['legacy', 'large']) {
@@ -66,14 +72,15 @@ test('旧画像・大きな小画像を同梱せず、初期応答を重くし�
     if (kind === 'legacy') delete state.publications[0].images[0].thumbnail;
     else state.publications[0].images[0].thumbnail.bytes = 30001;
     sheet.data[1][2] = JSON.stringify(state); h.state.driveReadLocks = [];
-    const result = h.call('initialCatalog_'); assert.equal(result.ok, true); assert.equal(result.initialImages.length, 0);
+    const result = h.call('initialCatalog_'); assert.equal(result.ok, true); assert.equal(result.initialImages, undefined);
     assert.equal(h.state.driveReadLocks.length, 0);
   }
 });
 
-test('HPは同梱された本文と画像で表示し、追加のカタログ・小画像RPCを省く', async () => {
-  for (const kind of ['valid', 'foreign', 'invalid']) {
+test('HPは本文を先に表示し画像を後から取得する。旧GASの同梱画像とも互換を保つ', async () => {
+  for (const kind of ['absent', 'valid', 'foreign', 'invalid']) {
     const { h, id } = imageFixture(); const response = h.call('initialCatalog_');
+    if (kind !== 'absent') response.initialImages = [{ ok: true, id, contentType: 'image/jpeg', base64: jpeg }];
     if (kind === 'foreign') response.initialImages[0].id = 'img_' + 'f'.repeat(32);
     if (kind === 'invalid') response.initialImages[0].base64 = '<invalid>';
     class Element {

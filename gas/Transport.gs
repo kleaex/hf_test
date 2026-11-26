@@ -16,32 +16,8 @@ function bridgePage_(parameters) {
 }
 
 function initialCatalog_() {
-  return api_(function () {
-    const reply = getPublicCatalog();
-    if (!reply.ok) fail_(reply.error.code, reply.error.message);
-    const preview = timed_('catalogPreview', function () {
-      return api_(function () {
-        let firstId;
-        reply.data.exhibitors.some(function (exhibitor) {
-          return exhibitor.publications.some(function (book) {
-            if (book.images.length) { firstId = book.images[0].id; return true; }
-            return false;
-          });
-        });
-        if (!firstId) return { images: [] };
-        const eligible = locked_(function () {
-          const image = publicImageIndex_(config_(true))[firstId];
-          return !!(image && image.thumbnail && image.thumbnail.bytes <= 30000);
-        });
-        if (!eligible) return { images: [] };
-        const images = publicImages_([firstId], 'thumbnail').images.filter(function (image) {
-          return image.ok && image.base64.length <= 40000;
-        });
-        return { images: images };
-      });
-    });
-    return { data: reply.data, initialImages: preview.ok ? preview.images : [] };
-  });
+  // 画像のDrive確認・読取で本文を待たせない。画像はHPの表示後に通常経路で取得する。
+  return getPublicCatalog();
 }
 
 function bridgeJson_(value) {
