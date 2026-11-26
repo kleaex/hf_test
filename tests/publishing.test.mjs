@@ -148,6 +148,7 @@ function publicClient(data, failFetch = false) {
     append(...nodes) { this.children.push(...nodes); }
     replaceChildren(...nodes) { this.children = nodes; }
     addEventListener(name, handler) { this.events[name] = handler; }
+    setAttribute(name, value) { this[name] = value; }
   }
   const elements = Object.fromEntries(['catalog', 'status', 'search', 'genre', 'publicationInfo', 'eventTitle', 'eventInfo', 'catalogNotice'].map(id => [id, new Element('div')]));
   const document = { body: new Element('body'), getElementById: id => elements[id], createElement: tag => new Element(tag) };

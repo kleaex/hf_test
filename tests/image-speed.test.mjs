@@ -36,7 +36,7 @@ function imageClient(storage = new Map(), options = {}) {
       delete: async key => entries.delete(key), keys: async () => [...entries.keys()] };
   } };
   class ImageURL extends URL { static createObjectURL() { return 'blob:test-image'; } static revokeObjectURL() {} }
-  const element = () => ({ append() {}, addEventListener() {}, removeAttribute() {} });
+  const element = () => ({ append() {}, addEventListener() {}, setAttribute() {}, removeAttribute() {} });
   const context = vm.createContext({ Blob, Uint8Array, atob, Response, URL: ImageURL,
     location: { href: 'https://example.invalid/hf_test/' },
     document: { getElementById: element, createElement: element, body: element() },

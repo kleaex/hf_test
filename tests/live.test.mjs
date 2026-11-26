@@ -184,5 +184,12 @@ test('公開HPは小画像を遅延取得し、クリック時だけ原寸画像
   assert.equal(calls[1].name, 'getPublicImages'); assert.deepEqual(Array.from(calls[1].args[0]), [staged.image.id]); assert.equal(button.children[0].src, 'blob:local-image');
   await button.events.click(); await settle(); assert.equal(calls[2].args[1], 'full');
   const dialog = body.children[0]; assert.equal(dialog.open, true); assert.equal(dialog.children[2].src, 'blob:local-image');
+  assert.equal(dialog.children[0].textContent, '×'); assert.equal(dialog.children[0]['aria-label'], '画像を閉じる');
+  dialog.getBoundingClientRect = () => ({ left: 100, right: 400, top: 100, bottom: 400 });
+  dialog.events.click({ target: dialog.children[2], clientX: 200, clientY: 200 }); assert.equal(dialog.open, true);
+  dialog.events.click({ target: dialog, clientX: 110, clientY: 110 }); assert.equal(dialog.open, true);
+  dialog.events.click({ target: dialog, clientX: 50, clientY: 200 }); assert.equal(dialog.open, false);
+  assert.equal(dialog.children[2].src, undefined);
+  await button.events.click(); await settle(); assert.equal(dialog.open, true);
   assert.equal(button.href, undefined); dialog.children[0].events.click(); assert.equal(dialog.open, false);
 });

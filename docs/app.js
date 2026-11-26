@@ -13,10 +13,18 @@ let activeImages = 0;
 let initialPreviews = 0;
 const lightbox = document.createElement('dialog');
 lightbox.className = 'image-dialog';
+lightbox.setAttribute('aria-label', '画像の拡大表示');
 const fullImage = document.createElement('img');
 const imageMessage = document.createElement('p');
-const closeImage = document.createElement('button'); closeImage.type = 'button'; closeImage.textContent = '閉じる';
+const closeImage = document.createElement('button'); closeImage.type = 'button'; closeImage.textContent = '×';
+closeImage.className = 'image-dialog-close'; closeImage.setAttribute('aria-label', '画像を閉じる');
 closeImage.addEventListener('click', () => lightbox.close());
+lightbox.addEventListener('click', event => {
+  if (event.target !== lightbox) return;
+  const bounds = lightbox.getBoundingClientRect();
+  if (event.clientX < bounds.left || event.clientX > bounds.right
+      || event.clientY < bounds.top || event.clientY > bounds.bottom) lightbox.close();
+});
 lightbox.append(closeImage, imageMessage, fullImage); document.body.append(lightbox);
 let openedImage = 0;
 lightbox.addEventListener('close', () => { openedImage++; fullImage.removeAttribute('src'); });
