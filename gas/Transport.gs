@@ -20,6 +20,19 @@ function initialCatalog_() {
   return getPublicCatalog();
 }
 
+// JSONPは公開本文の読取専用。認証・画像・書込APIをここから呼ばない。
+function publicCatalogScript_(parameters) {
+  const callback = parameters.callback;
+  const origins = json_(PropertiesService.getScriptProperties().getProperty('HF_FRONTEND_ORIGINS') || '[]');
+  if (typeof callback !== 'string' || !/^__hf_catalog_[a-f0-9]{32}$/.test(callback)
+      || !Array.isArray(origins) || origins.indexOf(parameters.origin) < 0) {
+    return ContentService.createTextOutput('/* Invalid catalog request. */').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  // callbackは固定形式のみ。公開文字列はコードとして解釈させず、遅い応答は破棄できる。
+  return ContentService.createTextOutput('typeof ' + callback + ' === "function" && ' + callback
+    + '(' + bridgeJson_(getPublicCatalog()) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
 function bridgeJson_(value) {
   // 紹介文等に </script> があってもHTMLのscript要素を終了させない。
   return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, function (character) {

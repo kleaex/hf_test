@@ -1,5 +1,6 @@
 /** 実験用Webアプリ。公開入口はこのファイルだけ。 */
 function doGet(event) {
+  if (event && event.parameter && event.parameter.view === 'catalog') return publicCatalogScript_(event.parameter);
   if (event && event.parameter && event.parameter.view === 'bridge') return bridgePage_(event.parameter);
   const admin = event && event.parameter && event.parameter.view === 'admin';
   return HtmlService.createHtmlOutputFromFile(admin ? 'AdminIndex' : 'Index').setTitle(admin ? '運営画面（実験用）' : '出店者編集（実験用）');

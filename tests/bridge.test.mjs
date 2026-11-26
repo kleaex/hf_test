@@ -12,7 +12,7 @@ function client(options = {}) {
   let count = 0;
   const peer = { length: 0, postMessage: (...args) => sent.push(args) };
   const root = { length: 1, 0: peer };
-  const window = { HF_CONNECTION: { gasUrl: 'https://script.google.com/macros/s/TEST_DEPLOYMENT/exec' },
+  const window = { HF_CONNECTION: { gasUrl: 'https://script.google.com/macros/s/TEST_DEPLOYMENT/exec', ...(options.direct ? {} : { catalogTransport: 'bridge' }) },
     addEventListener: (name, handler) => handlers.add(handler), removeEventListener: (name, handler) => handlers.delete(handler) };
   class TestURL extends URL { static createObjectURL() { return 'blob:test-image'; } static revokeObjectURL(url) { revoked.push(url); } }
   const context = vm.createContext({ window, crypto, URL: TestURL, URLSearchParams, Uint8Array, Blob, atob,
@@ -23,7 +23,7 @@ function client(options = {}) {
           removeAttribute(name) { delete this[name]; } };
         images.push(img); return img;
       }
-      return { contentWindow: root, addEventListener() {}, remove() {} };
+      return { tagName: tag, contentWindow: root, addEventListener() {}, remove() { this.removed = true; } };
     } },
     setTimeout: (callback, ms) => { const id = ++count; timers.set(id, { callback, ms }); return id; }, clearTimeout: id => timers.delete(id) });
   vm.runInContext(source, context);
@@ -34,6 +34,49 @@ function client(options = {}) {
   const tick = ms => { for (const [id, timer] of [...timers]) if (timer.ms === ms) { timers.delete(id); timer.callback(); } };
   return { window, frames, handlers, timers, sent, message, ready, tick, peer, root, images, revoked };
 }
+
+test('公開本文はscriptで直接取得しiframeを作らず、同時取得だけ共有して次回は再取得する', async () => {
+  const c = client({ direct: true });
+  const first = c.window.hfLoadCatalog(), shared = c.window.hfLoadCatalog();
+  assert.equal(c.frames.length, 1); assert.equal(c.frames[0].tagName, 'script');
+  const script = c.frames[0], url = new URL(script.src), callback = url.searchParams.get('callback');
+  assert.equal(url.searchParams.get('view'), 'catalog'); assert.match(callback, /^__hf_catalog_[a-f0-9]{32}$/);
+  assert.deepEqual([...url.searchParams.keys()].sort(), ['callback', 'origin', 'view']);
+  assert.equal(c.handlers.size, 0); assert.equal(script.async, true); assert.equal(script.referrerPolicy, 'no-referrer');
+  c.window[callback]({ ok: true, data: { title: '現在' }, performance: { totalMs: 5 } });
+  assert.equal((await first).data.title, '現在'); assert.equal((await shared).data.title, '現在');
+  assert.equal(c.window[callback], undefined); assert.equal(c.timers.size, 0);
+  assert.equal(script.removed, true);
+  script.onload(); assert.equal(c.frames.length, 1);
+  assert.equal(c.window.hfPerformance.snapshot()[0].operation, 'catalogDirect');
+  const next = c.window.hfLoadCatalog(); assert.equal(c.frames.length, 2);
+  c.window[new URL(c.frames[1].src).searchParams.get('callback')]({ ok: true, data: { title: '更新' } });
+  assert.equal((await next).data.title, '更新');
+  const protectedRequest = c.window.hfRpc('getMyProfile', 'PRIVATE_TOKEN');
+  assert.equal(c.frames[2].tagName, 'iframe'); assert.doesNotMatch(c.frames[2].src, /PRIVATE_TOKEN/);
+  const nonce = c.ready(); await settle(); const message = c.sent[0][0];
+  assert.equal(message.args[0], 'PRIVATE_TOKEN');
+  c.message({ channel: 'hf-rpc-v1', nonce, id: message.id, result: { ok: true, data: { owner: true } } });
+  assert.equal((await protectedRequest).data.owner, true);
+});
+
+test('直接取得の正本エラーは再試行で隠さず、通信失敗・旧GAS・タイムアウトはbridgeへ戻す', async () => {
+  const error = client({ direct: true }); const request = error.window.hfLoadCatalog();
+  error.window[new URL(error.frames[0].src).searchParams.get('callback')]({ ok: false, error: { code: 'UNAVAILABLE' } });
+  await assert.rejects(request, value => value.code === 'UNAVAILABLE'); assert.equal(error.frames.length, 1);
+  for (const mode of ['error', 'load', 'timeout', 'invalid']) {
+    const c = client({ direct: true }); const request = c.window.hfLoadCatalog();
+    const script = c.frames[0], callback = new URL(script.src).searchParams.get('callback');
+    if (mode === 'error') script.onerror();
+    if (mode === 'load') script.onload();
+    if (mode === 'timeout') c.tick(15000);
+    if (mode === 'invalid') c.window[callback]({ data: {} });
+    await settle(); assert.equal(c.window[callback], undefined); assert.equal(c.frames.length, 2);
+    c.ready({ initialCatalog: { ok: true, data: { title: '互換' } } });
+    assert.equal((await request).data.title, '互換'); assert.equal(c.timers.size, 0);
+    assert.equal(c.window.hfPerformance.snapshot()[0].operation, 'catalogDirectFallback');
+  }
+});
 test('二重iframeのready・RPC応答を照合し、別窓・別origin・別nonce・未知の要求IDを拒否', async () => {
   const c = client(); let completed = false;
   const request = c.window.hfRpc('getMyProfile', 'private-token').then(result => { completed = true; return result; });

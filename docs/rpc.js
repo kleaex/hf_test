@@ -2,7 +2,7 @@
 // GASの二重iframeにも対応し、作成したiframeの子孫以外からの応答を受け付けない。
 (() => {
   const measurements = [];
-  const labels = new Set(['bridge', 'catalogInitial', 'catalogFallback', 'catalogLoad', 'catalogTextReady', 'imagePrepare', 'imageUpload', 'imageProbe', 'imageLoad', 'imageQueue', 'imageUnpack', 'imageReady', 'imageCache', 'catalogPaint', 'getPublicCatalog', 'getPublicImage', 'getPublicImages',
+  const labels = new Set(['bridge', 'catalogDirect', 'catalogDirectFallback', 'catalogInitial', 'catalogFallback', 'catalogLoad', 'catalogTextReady', 'imagePrepare', 'imageUpload', 'imageProbe', 'imageLoad', 'imageQueue', 'imageUnpack', 'imageReady', 'imageCache', 'catalogPaint', 'getPublicCatalog', 'getPublicImage', 'getPublicImages',
     'getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'stagePublicationImage', 'getPublicationImage', 'logout',
     'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'getAdminImage', 'logoutAdmin']);
   const stages = new Set(['lockWait', 'lockHeld', 'sheetHeader', 'sheetRead', 'sheetWrite', 'catalogBuild', 'catalogCache',
@@ -124,7 +124,7 @@
     });
     return ready;
   }
-  window.hfLoadCatalog = async () => {
+  const loadCatalogBridge = async () => {
     const started = Date.now();
     await connect(true);
     if (initialCatalog !== undefined) {
@@ -138,6 +138,49 @@
     const result = await window.hfRpc('getPublicCatalog');
     window.hfPerformance.record('catalogFallback', Date.now() - started, result.performance);
     return result;
+  };
+  let directCatalog;
+  function loadCatalogDirect() {
+    const url = new URL(window.HF_CONNECTION?.gasUrl || '', location.href);
+    if (url.origin !== 'https://script.google.com' || !/^\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url.pathname)) throw network();
+    const callback = '__hf_catalog_' + random(16);
+    url.search = new URLSearchParams({ view: 'catalog', origin: location.origin, callback });
+    const script = document.createElement('script');
+    script.async = true; script.referrerPolicy = 'no-referrer';
+    const started = Date.now();
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timeout); delete window[callback]; script.remove(); };
+      const failed = () => { cleanup(); reject(network()); };
+      const timeout = setTimeout(failed, 15000);
+      window[callback] = result => {
+        cleanup();
+        if (!result || typeof result.ok !== 'boolean') { reject(network()); return; }
+        window.hfPerformance.record('catalogDirect', Date.now() - started, result.performance);
+        // 正本のエラーはそのまま伝える。失敗した公開APIを別経路で隠さない。
+        resolve(result);
+      };
+      script.onerror = failed;
+      script.onload = () => { if (Object.prototype.hasOwnProperty.call(window, callback)) failed(); };
+      script.src = url.href; document.body.append(script);
+    });
+  }
+  window.hfLoadCatalog = async () => {
+    if (window.HF_CONNECTION?.catalogTransport === 'bridge') return loadCatalogBridge();
+    // 同時呼出しだけを共有し、次回取得は新しい正本を読む。
+    if (!directCatalog) {
+      const started = Date.now();
+      directCatalog = (async () => {
+        let result;
+        try { result = await loadCatalogDirect(); }
+        catch (_) {
+          window.hfPerformance.record('catalogDirectFallback', Date.now() - started);
+          return loadCatalogBridge();
+        }
+        if (!result.ok) throw result.error || network();
+        return result;
+      })().finally(() => { directCatalog = null; });
+    }
+    return directCatalog;
   };
   window.hfRpc = async (method, ...args) => {
     await connect();
