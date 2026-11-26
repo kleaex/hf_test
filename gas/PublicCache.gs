@@ -9,18 +9,33 @@ function publicCacheKey_(config, kind, version) {
 function cachedPublicJson_(key) {
   try {
     const cache = CacheService.getScriptCache();
-    const meta = JSON.parse(cache.get(key) || 'null');
-    if (!meta || !Number.isInteger(meta.parts) || meta.parts < 1 || meta.parts > 60 || typeof meta.tag !== 'string') return null;
+    const raw = cache.get(key);
+    if (raw === null) { cacheEvent_('jsonMiss'); return null; }
+    let meta;
+    try { meta = JSON.parse(raw); } catch (_) { cacheEvent_('jsonInvalid'); return null; }
+    if (meta && Object.prototype.hasOwnProperty.call(meta, 'data')) { cacheEvent_('jsonHit'); return meta.data; }
+    if (!meta || !Number.isInteger(meta.parts) || meta.parts < 1 || meta.parts > 60 || typeof meta.tag !== 'string') { cacheEvent_('jsonInvalid'); return null; }
     const keys = Array.from({ length: meta.parts }, function (_, index) { return key + ':' + meta.tag + ':' + index; });
     const chunks = cache.getAll(keys);
-    if (keys.some(function (part) { return typeof chunks[part] !== 'string'; })) return null;
-    return JSON.parse(keys.map(function (part) { return chunks[part]; }).join(''));
-  } catch (_) { return null; }
+    if (keys.some(function (part) { return typeof chunks[part] !== 'string'; })) { cacheEvent_('jsonPartial'); return null; }
+    let data;
+    try { data = JSON.parse(keys.map(function (part) { return chunks[part]; }).join('')); }
+    catch (_) { cacheEvent_('jsonInvalid'); return null; }
+    cacheEvent_('jsonHit'); return data;
+  } catch (_) { cacheEvent_('jsonReadError'); return null; }
 }
 
 function keepPublicJson_(key, value, seconds) {
+  return timed_('cacheWrite', function () {
   try {
     const serialized = JSON.stringify(value);
+    const cache = CacheService.getScriptCache();
+    if (serialized.length <= 12000) {
+      const payload = '{"data":' + serialized + '}';
+      cache.put(key, payload, seconds); cacheEvent_('jsonStored');
+      verifyCacheWrite_(cache, key, payload);
+      return;
+    }
     const pieces = [];
     for (let start = 0; start < serialized.length;) {
       let end = Math.min(start + 12000, serialized.length);
@@ -29,14 +44,24 @@ function keepPublicJson_(key, value, seconds) {
       pieces.push(serialized.slice(start, end)); start = end;
     }
     const parts = pieces.length;
-    if (!parts || parts > 60) return;
-    const cache = CacheService.getScriptCache(), tag = Utilities.getUuid();
+    if (!parts || parts > 60) { cacheEvent_('jsonOversize'); return; }
+    const tag = Utilities.getUuid();
     const chunks = {};
     for (let index = 0; index < parts; index++) chunks[key + ':' + tag + ':' + index] = pieces[index];
     cache.putAll(chunks, seconds);
     // 各項目100KB以下。全チャンク保存後にメタデータを置き、欠落時は再構築する。
-    cache.put(key, JSON.stringify({ tag: tag, parts: parts }), seconds);
-  } catch (_) { /* キャッシュの失敗は公開・保存を失敗させない。 */ }
+    const payload = JSON.stringify({ tag: tag, parts: parts });
+    cache.put(key, payload, seconds); cacheEvent_('jsonStored');
+    verifyCacheWrite_(cache, key, payload);
+  } catch (_) { cacheEvent_('jsonWriteError'); /* キャッシュの失敗は公開・保存を失敗させない。 */ }
+  });
+}
+
+function verifyCacheWrite_(cache, key, payload) {
+  // 計測時だけ、書込直後に読めるか確認する。内容やキーは診断へ出さない。
+  if (!HF_REQUEST_ || !HF_REQUEST_.diagnostics) return;
+  try { cacheEvent_(cache.get(key) === payload ? 'jsonWriteVerified' : 'jsonWriteMissing'); }
+  catch (_) { cacheEvent_('jsonReadbackError'); }
 }
 
 function cachedSmallImage_(key) {

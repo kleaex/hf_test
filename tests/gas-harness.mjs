@@ -24,7 +24,7 @@ export function harness() {
     failWrite: null, failAfterWrite: null, decodeFails: false, conversions: 0,
     folderShared: false, folderViewers: [], folderEditors: [], driveFails: false, exportFolderShared: false, zipEntries: [],
     sheetReads: {}, driveReadLocks: [], decodeLocks: [], createLocks: [], cacheEnabled: false,
-    cacheFails: false, failProperty: null, beforeDecode: null, beforeCreate: null };
+    cacheFails: false, cacheReadFails: false, cacheWriteFails: false, failProperty: null, beforeDecode: null, beforeCreate: null };
   const cache = new Map();
   const files = new Map();
   const iterator = items => { let at = 0; return { hasNext: () => at < items.length, next: () => items[at++] }; };
@@ -94,8 +94,14 @@ export function harness() {
       deleteProperty: key => { delete properties[key]; } }) },
     CacheService: { getScriptCache: () => {
       if (state.cacheFails) throw Error('cache unavailable');
-      const get = key => state.cacheEnabled && cache.get(key)?.until > now ? cache.get(key).value : null;
-      const put = (key, value, seconds) => { if (state.cacheEnabled) cache.set(key, { value, until: now + seconds * 1000 }); };
+      const get = key => {
+        if (state.cacheReadFails) throw Error('private cache details');
+        return state.cacheEnabled && cache.get(key)?.until > now ? cache.get(key).value : null;
+      };
+      const put = (key, value, seconds) => {
+        if (state.cacheWriteFails) throw Error('private cache details');
+        if (state.cacheEnabled) cache.set(key, { value, until: now + seconds * 1000 });
+      };
       return { get, put, getAll: keys => Object.fromEntries(keys.map(key => [key, get(key)]).filter(([, value]) => value !== null)),
         putAll: (values, seconds) => Object.entries(values).forEach(([key, value]) => put(key, value, seconds)) };
     } },

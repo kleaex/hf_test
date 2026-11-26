@@ -110,7 +110,11 @@ function logoutAdmin(token) {
 
 function api_(operation) {
   const owner = !HF_REQUEST_;
-  if (owner) HF_REQUEST_ = { start: Date.now(), stages: {}, config: null, sheets: {} };
+  if (owner) {
+    HF_REQUEST_ = { start: Date.now(), stages: {}, cache: {}, config: null, sheets: {}, diagnostics: false };
+    try { HF_REQUEST_.diagnostics = PropertiesService.getScriptProperties().getProperty('HF_PERFORMANCE') === 'true'; }
+    catch (_) { /* 計測設定だけの失敗で業務処理を止めない。 */ }
+  }
   let result;
   try { result = Object.assign({ ok: true }, operation()); }
   catch (error) {
@@ -121,8 +125,8 @@ function api_(operation) {
   }
   if (owner) {
     try {
-      if (PropertiesService.getScriptProperties().getProperty('HF_PERFORMANCE') === 'true') {
-        result.performance = { totalMs: Date.now() - HF_REQUEST_.start, stages: HF_REQUEST_.stages };
+      if (HF_REQUEST_.diagnostics) {
+        result.performance = { totalMs: Date.now() - HF_REQUEST_.start, stages: HF_REQUEST_.stages, cache: HF_REQUEST_.cache };
       }
     } catch (_) { /* 計測設定の障害で処理結果を変えない。 */ }
     HF_REQUEST_ = null;

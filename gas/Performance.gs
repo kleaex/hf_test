@@ -1,6 +1,10 @@
 // 要求ごとに破棄する。入力・メール・ID・URL・トークンは記録しない。
 let HF_REQUEST_ = null;
 
+function cacheEvent_(name) {
+  if (HF_REQUEST_) HF_REQUEST_.cache[name] = (HF_REQUEST_.cache[name] || 0) + 1;
+}
+
 function timed_(name, operation) {
   const start = Date.now();
   try { return operation(); }

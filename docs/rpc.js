@@ -6,7 +6,9 @@
     'getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'stagePublicationImage', 'getPublicationImage', 'logout',
     'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'getAdminImage', 'logoutAdmin']);
   const stages = new Set(['lockWait', 'lockHeld', 'sheetHeader', 'sheetRead', 'sheetWrite', 'catalogBuild', 'catalogCache',
-    'imageValidate', 'thumbnailValidate', 'driveSave', 'driveRead', 'driveMetadata', 'imageAuthorize', 'imageCommit', 'sharedImageCache']);
+    'imageValidate', 'thumbnailValidate', 'driveSave', 'driveRead', 'driveMetadata', 'imageAuthorize', 'imageCommit', 'sharedImageCache', 'cacheWrite']);
+  const cacheStatuses = new Set(['jsonMiss', 'jsonHit', 'jsonInvalid', 'jsonPartial', 'jsonReadError', 'jsonStored',
+    'jsonOversize', 'jsonWriteError', 'jsonWriteVerified', 'jsonWriteMissing', 'jsonReadbackError']);
   window.hfPerformance = Object.freeze({
     record(operation, elapsedMs, server) {
       if (!labels.has(operation) || !Number.isFinite(elapsedMs) || elapsedMs < 0) return;
@@ -15,6 +17,10 @@
         item.serverMs = server.totalMs; item.stages = {};
         for (const [name, value] of Object.entries(server.stages || {})) {
           if (stages.has(name) && Number.isFinite(value.ms) && Number.isSafeInteger(value.count)) item.stages[name] = { ms: value.ms, count: value.count };
+        }
+        item.cache = {};
+        for (const [name, count] of Object.entries(server.cache || {})) {
+          if (cacheStatuses.has(name) && Number.isSafeInteger(count) && count > 0) item.cache[name] = count;
         }
       }
       measurements.push(item); if (measurements.length > 100) measurements.shift();

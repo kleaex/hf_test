@@ -35,7 +35,8 @@ test('二重iframeのready・RPC応答を照合し、別窓・別origin・別non
   c.ready(); await settle(); assert.equal(c.sent.length, 1);
   const [message, origin] = c.sent[0]; assert.equal(origin, 'https://n-test-0lu-script.googleusercontent.com'); assert.equal(message.args[0], 'private-token');
   assert.doesNotMatch(c.frames[0].src, /private-token/);
-  const response = { channel: 'hf-rpc-v1', nonce, id: message.id, result: { ok: true, data: { name: '本人' } } };
+  const response = { channel: 'hf-rpc-v1', nonce, id: message.id, result: { ok: true, data: { name: '本人' },
+    performance: { totalMs: 50, stages: {}, cache: { jsonHit: 1, 'private-key': 2 } } } };
   c.message(response, 'https://evil.invalid'); c.message(response, undefined, c.root); c.message({ ...response, id: 'f'.repeat(32) });
   await settle(); assert.equal(completed, false);
   c.message(response); assert.equal((await request).data.name, '本人');
@@ -43,6 +44,7 @@ test('二重iframeのready・RPC応答を照合し、別窓・別origin・別non
   const measurements = c.window.hfPerformance.snapshot();
   assert.deepEqual(Array.from(measurements, item => item.operation), ['bridge', 'getMyProfile']);
   assert.doesNotMatch(JSON.stringify(measurements), /private-token|本人|example|google/);
+  assert.equal(measurements[1].cache.jsonHit, 1); assert.equal(measurements[1].cache['private-key'], undefined);
 });
 test('接続・応答のタイムアウトを成功扱いにせず、接続失敗後は新しいnonceで再試行', async () => {
   const c = client(); const first = c.window.hfRpc('getPublicCatalog'); const rejected = assert.rejects(first, error => error.network === true);

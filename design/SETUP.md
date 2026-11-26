@@ -1,5 +1,46 @@
 # 実験環境の設定
 
+## カタログの共有キャッシュ診断を反映する（今回の追加修正）
+
+60秒以内の再表示でもcatalogBuildが残る場合の切り分けと、小さいカタログの保存処理の簡素化を追加した。
+現行ログでは例外・未保存・期限切れ等を区別できず、実環境の原因はまだ確定していない。
+
+| 配置先 | 置換するファイル |
+| --- | --- |
+| GAS | PublicCache.gs、Performance.gs、Code.gs |
+| GitHub Pages | docs/rpc.js |
+
+GASの3ファイルを更新して既存デプロイを新バージョンへ更新した後、HPのrpc.jsを配信する。
+前回までの他のファイル・接続URLは維持。HF_PERFORMANCEは `true` のまま使う。新たな設定値は不要。
+小さい公開JSONは1項目に保存し、大きいデータのみ分割保存する。旧分割形式も読み出せる。
+
+HPを再読み込みした後、同じページのConsoleで以下を実行する。カタログの公開情報を読むだけで保存はしない。
+
+```js
+hfPerformance.clear();
+await hfRpc('getPublicCatalog');
+await hfRpc('getPublicCatalog');
+hfPerformance.snapshot();
+```
+
+2回目の `cache` と `stages` を確認する。キー・画像・認証情報・生の例外文は診断へ出さない。
+
+| cache内の値 | 意味 |
+| --- | --- |
+| jsonHit | 既存のキャッシュを利用した |
+| jsonMiss | メタデータがなかった。初回・期限切れ・早期消失・保存等による世代変更の可能性があり、これだけで原因確定はできない |
+| jsonStored | 保存APIが例外なしで完了した |
+| jsonWriteVerified | 計測時の確認で、保存直後にメタデータを読み出せた |
+| jsonWriteMissing | 保存APIは完了したが、直後の確認では読み出せなかった |
+| jsonWriteError | 保存APIで例外が発生した |
+| jsonReadError / jsonReadbackError | 通常の読取／保存直後の読取確認で例外が発生した |
+| jsonPartial / jsonInvalid / jsonOversize | 分割データの一部欠落／形式不正／対応する保存容量の超過 |
+
+`cacheWrite` は共有JSONの保存と、計測有効時だけ行う直後の読取確認の時間。
+2回目がjsonHitでcatalogBuildがなければキャッシュ利用を確認できる。サービスの保持自体は保証されず、消失時は正本へ戻る。
+参考: [Google Cache Service](https://developers.google.com/apps-script/reference/cache/cache-service)、
+[保存制限・保持期間](https://developers.google.com/apps-script/reference/cache/cache)。
+
 ## カタログ・登録速度とプレビューの改善を反映する（今回）
 
 HP移行・前回の画像表示高速化を反映済みの環境では、次を配置する。
