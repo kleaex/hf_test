@@ -24,7 +24,8 @@ export function harness() {
     failWrite: null, failAfterWrite: null, decodeFails: false, conversions: 0,
     folderShared: false, folderViewers: [], folderEditors: [], driveFails: false, exportFolderShared: false, zipEntries: [],
     sheetReads: {}, driveReadLocks: [], decodeLocks: [], createLocks: [], cacheEnabled: false,
-    cacheFails: false, cacheReadFails: false, cacheWriteFails: false, failProperty: null, beforeDecode: null, beforeCreate: null };
+    cacheFails: false, cacheReadFails: false, cacheWriteFails: false, failProperty: null, beforeDecode: null, beforeCreate: null,
+    driveApiEnabled: false, driveApiFails: false, driveApiCalls: [], metadataTransform: null, fileHandleReads: 0, folderHandleReads: 0 };
   const cache = new Map();
   const files = new Map();
   const iterator = items => { let at = 0; return { hasNext: () => at < items.length, next: () => items[at++] }; };
@@ -118,9 +119,10 @@ export function harness() {
       state.mail.push(mail); state.quota--;
     } },
     DriveApp: { Access: { PRIVATE: 'PRIVATE' }, getFolderById: id => {
+      state.folderHandleReads++;
       if (id === 'test_export_folder_only') return exportFolder;
       if (id !== 'test_image_folder_only') throw new Error('folder missing'); return folder;
-    }, getFileById: id => { if (!files.has(id)) throw new Error('file missing'); return files.get(id); } },
+    }, getFileById: id => { state.fileHandleReads++; if (!files.has(id)) throw new Error('file missing'); return files.get(id); } },
     Utilities: { Charset: { UTF_8: 'UTF_8' }, getUuid: () => crypto.randomUUID(),
       DigestAlgorithm: { SHA_256: 'SHA_256' }, computeDigest: (_, bytes) => [...crypto.createHash('sha256').update(Buffer.from(bytes.map(byte => (byte + 256) % 256))).digest()].map(byte => byte > 127 ? byte - 256 : byte),
       zip: (blobs, name) => {
@@ -132,7 +134,23 @@ export function harness() {
       base64Encode: bytes => Buffer.from(bytes.map(byte => (byte + 256) % 256)).toString('base64'), newBlob: blob,
       computeHmacSha256Signature: (value, key) => [...crypto.createHmac('sha256', key).update(value).digest()].map(byte => byte > 127 ? byte - 256 : byte) }
   });
-  for (const name of ['Code', 'Store', 'Auth', 'Profile', 'Admin', 'Images', 'Publishing', 'AdminConsole', 'Transport', 'PublicCatalog', 'Performance', 'PublicCache']) vm.runInContext(fs.readFileSync(new URL('../gas/' + name + '.gs', import.meta.url), 'utf8'), context, { filename: name + '.gs' });
+  Object.defineProperty(context, 'Drive', { get: () => state.driveApiEnabled ? { Files: { get: (id, options) => {
+    state.driveApiCalls.push({ id, options });
+    if (state.driveApiFails) throw Error('private Drive API error');
+    const isFolder = id === folder.getId() || id === exportFolder.getId();
+    const item = id === folder.getId() ? folder : id === exportFolder.getId() ? exportFolder : files.get(id);
+    if (!item) throw Error('missing file');
+    const shared = item.getSharingAccess() !== 'PRIVATE';
+    const metadata = { id, mimeType: isFolder ? 'application/vnd.google-apps.folder' : item.data.getContentType(),
+      trashed: item.isTrashed(), ownedByMe: true, shared: shared || item.getEditors().length > 0 || item.getViewers().length > 0,
+      owners: [{ me: true, permissionId: 'owner_only' }], permissions: [{ id: 'owner_only', type: 'user', role: 'owner' }],
+      modifiedTime: new Date(item.modifiedAt || 1).toISOString() };
+    const parents = item.getParents?.(); metadata.parents = [];
+    if (parents) while (parents.hasNext()) metadata.parents.push(parents.next().getId());
+    if (shared) metadata.permissions.push({ id: 'anyone', type: 'anyone', role: 'reader' });
+    return state.metadataTransform ? state.metadataTransform(metadata) : metadata;
+  } } } : undefined });
+  for (const name of ['Code', 'Store', 'Auth', 'Profile', 'Admin', 'Images', 'Publishing', 'AdminConsole', 'Transport', 'PublicCatalog', 'Performance', 'PublicCache', 'DriveMetadata']) vm.runInContext(fs.readFileSync(new URL('../gas/' + name + '.gs', import.meta.url), 'utf8'), context, { filename: name + '.gs' });
   const call = (name, ...args) => JSON.parse(JSON.stringify(context[name](...JSON.parse(JSON.stringify(args)))));
   const setup = () => call('setupExperiment_');
   const code = email => state.mail.findLast(mail => mail.to === email)?.body.match(/確認コード: (\d{6})/)[1];

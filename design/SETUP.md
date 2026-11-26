@@ -1,5 +1,61 @@
 # 実験環境の設定
 
+## 実測に基づく画像読取の改善を反映する（今回）
+
+変更前の実測では、小画像22,014バイトでも約6.11秒／3.66秒かかり、毎回のDrive確認が約1.1〜1.9秒を占めた。
+最初の画像要求ではSheetsの2回読取にも約2.09秒かかっていた。
+画像をさらに圧縮する前に、確認情報の取得とカタログ／画像間の重複読取を改善する。
+新経路の実GASでの短縮幅・API応答は反映後に確認する。模擬テストを実環境の速度保証にしない。
+
+### 反映するファイル
+
+| 配置先 | ファイル | 操作 |
+| --- | --- | --- |
+| GAS | gas/DriveMetadata.gs → DriveMetadata | **スクリプトを追加**。画像読取時の確認情報をDrive APIで取得 |
+| GAS | gas/Images.gs → Images | **置換**。読取時のAPI経路・従来経路の選択 |
+| GAS | gas/PublicCatalog.gs → PublicCatalog | **置換**。同じ正本読取から画像索引も用意 |
+| GAS | gas/appsscript.json → appsscript.json | **置換**。高度なDriveサービスv3を有効化 |
+| Pages | docs/rpc.js | **置換**。新しい計測区間を受け取る |
+
+既存のGASファイルは残す。接続URL、Script Properties、画像・SpreadsheetのIDは維持し、初期設定は再実行しない。
+
+### Drive APIを有効にして再デプロイする
+
+1. GASで上の追加・置換を行い、保存する。
+2. エディタ左の「サービス」に **Drive** があり、APIバージョンが **v3** であることを確認する。
+   マニフェスト更新で追加される。表示されない場合は「サービス」の「＋」からGoogle Drive APIを選び、v3・識別子Driveで追加する。
+3. Apps Scriptの既定のCloudプロジェクトなら、対応APIはサービス追加時に自動で有効になる。
+   標準のGoogle Cloudプロジェクトに切り替えてある場合だけ、そのプロジェクトのGoogle Drive APIも有効にする。
+4. 既存デプロイを新バージョンへ更新する。スコープは従来のdriveのままで、Spreadsheet・Driveの共有は変更しない。
+5. HPのrpc.jsを配信して公開カタログを再読み込みする。
+
+参考: [高度なGoogleサービスの有効化](https://developers.google.com/apps-script/guides/services/advanced)、
+[Driveサービス](https://developers.google.com/apps-script/advanced/drive)。
+
+### 確認する
+
+同じConsoleコマンドで再計測する。
+
+```js
+JSON.stringify(await hfPerformance.measureImages(), null, 2)
+```
+
+- 画像読取のstages.driveMetadataApiが2回なら、フォルダ・画像をそれぞれ1回のAPI要求で確認した経路。
+- 画像読取でdriveMetadataLegacyだけが出る場合、従来経路で動作している。最新デプロイのDriveサービスとマニフェストを確認する。
+- APIサービスが未有効なら従来経路へ戻る。有効なAPIからのエラーや必要情報の欠落は、確認を省略して続行しない。
+- カタログを再構築した際、同じ正本読取の結果でGAS内部の画像索引も作る。保持されていれば最初の画像要求にsheetReadは出ない。
+  その分の索引作成・キャッシュ保存時間はカタログ側のimageIndexSeedに含まれる。追加のSheets読取は行わない。
+- 小画像の2回目は、共有画像キャッシュが保持されていればdriveReadが消える。毎回の現在の公開判定とDrive確認は残る。
+
+APIで取得する情報は、所有者・共有・権限一覧・ゴミ箱状態・保存先・更新日時・種類に限定する。
+所有者本人の単独所有、所有者以外の権限なし、非共有・非ゴミ箱、画像の保存先一致を必要とする。
+共有ドライブ、ショートカット、必要な権限情報が返らないケースも拒否する。内容のHMAC・容量検証は維持する。
+権限・Drive IDはGAS内部だけで扱い、公開カタログへ渡さない。
+画像の登録処理は今回の高速API経路へ切り替えていない。登録の速度は別のログで確認する。
+
+根拠: [Drive files.get](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/get)、
+[Fileのpermissions・ownedByMe等](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)。
+
 ## 画像表示・画像登録を計測する（今回）
 
 カタログの追加高速化はいったん区切る。画像の実測に必要なブラウザー側の記録を追加した。

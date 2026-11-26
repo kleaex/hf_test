@@ -16,6 +16,8 @@ function publicCatalog_() {
       });
     });
   });
+  // 同じ正本の読取結果を使い、最初の画像要求でSheetsを読み直さずに済むようにする。
+  timed_('imageIndexSeed', function () { return publicImageIndex_(config); });
   keepPublicJson_(key, data, 60);
   return data;
 }
@@ -26,6 +28,27 @@ function publicImage_(imageId, variant) {
   return { contentType: result.contentType, base64: result.base64 };
 }
 
+function publicImageIndex_(config) {
+  const key = publicCacheKey_(config, 'imageIndex', config.properties.getProperty('HF_PUBLIC_GENERATION') || 'initial');
+  const cached = timed_('catalogCache', function () { return cachedPublicJson_(key); });
+  if (cached) return cached;
+  const selections = publicationSettings_(config).exhibitors;
+  const records = HF_REQUEST_ && HF_REQUEST_.sheets.Exhibitors || rows_(database_(config, ['Exhibitors']).Exhibitors);
+  const images = Object.create(null);
+  selections.forEach(function (selection) {
+    const matches = records.filter(function (record) { return record.values[0] === selection.exhibitorId; });
+    if (matches.length > 1) fail_('SCHEMA', '保存先に重複があります。運営に確認してください。');
+    const record = matches[0];
+    if (!record || record.values[1] !== config.eventId) return;
+    json_(record.values[2]).publications.forEach(function (book) {
+      (book.images || []).forEach(function (image) { images[image.id] = image; });
+    });
+  });
+  // Drive ID等を含む索引はGAS内だけに保存し、API応答へ返さない。
+  keepPublicJson_(key, images, 60);
+  return images;
+}
+
 function publicImages_(imageIds, variant) {
   if (!Array.isArray(imageIds) || imageIds.length < 1 || imageIds.length > 3
       || imageIds.some(function (id, index) { return typeof id !== 'string' || !/^img_[a-f0-9]{32}$/.test(id) || imageIds.indexOf(id) !== index; })
@@ -33,24 +56,7 @@ function publicImages_(imageIds, variant) {
   // 変更と競合する公開対象の確認だけをロックする。遅いDrive読取で他の画像・保存を待たせない。
   const snapshot = locked_(function () {
     const config = config_(true);
-    const key = publicCacheKey_(config, 'imageIndex', config.properties.getProperty('HF_PUBLIC_GENERATION') || 'initial');
-    let images = timed_('catalogCache', function () { return cachedPublicJson_(key); });
-    if (!images) {
-      const selections = publicationSettings_(config).exhibitors;
-      const records = rows_(database_(config, ['Exhibitors']).Exhibitors);
-      images = Object.create(null);
-      selections.forEach(function (selection) {
-        const matches = records.filter(function (record) { return record.values[0] === selection.exhibitorId; });
-        if (matches.length > 1) fail_('SCHEMA', '保存先に重複があります。運営に確認してください。');
-        const record = matches[0];
-        if (!record || record.values[1] !== config.eventId) return;
-        json_(record.values[2]).publications.forEach(function (book) {
-          (book.images || []).forEach(function (image) { images[image.id] = image; });
-        });
-      });
-      // Drive ID等を含む索引はGAS内だけに保存し、API応答へ返さない。
-      keepPublicJson_(key, images, 60);
-    }
+    const images = publicImageIndex_(config);
     const selected = Object.create(null);
     imageIds.forEach(function (id) {
       const image = images[id];
@@ -63,7 +69,7 @@ function publicImages_(imageIds, variant) {
     return Object.assign({ id: id }, api_(function () {
       const image = snapshot.images[id];
       if (!image) fail_('NOT_FOUND', '公開画像が見つかりません。');
-      if (!folder) folder = imageFolder_(snapshot.config);
+      if (!folder) folder = imageFolder_(snapshot.config, true);
       return { contentType: image.contentType, base64: Utilities.base64Encode(storedImageBytes_(snapshot.config, image, folder, variant === 'thumbnail')) };
     }));
   }) };

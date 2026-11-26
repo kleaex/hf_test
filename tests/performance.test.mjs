@@ -107,8 +107,8 @@ test('計測は固定した処理名・時間・回数のみを返し、入力�
 test('小さいカタログは1項目で保存し、命中と書込直後の読取を診断できる', () => {
   const { h } = ready(); h.state.cacheEnabled = true; h.properties.HF_PERFORMANCE = 'true';
   const first = h.call('getPublicCatalog');
-  assert.deepEqual(first.performance.cache, { jsonMiss: 1, jsonStored: 1, jsonWriteVerified: 1 });
-  assert.equal(h.cache.size, 1);
+  assert.deepEqual(first.performance.cache, { jsonMiss: 2, jsonStored: 2, jsonWriteVerified: 2 });
+  assert.equal([...h.cache.keys()].filter(key => key.startsWith('hf_catalog_')).length, 1);
   assert.ok(first.performance.stages.cacheWrite);
   const second = h.call('getPublicCatalog'); assert.deepEqual(second.performance.cache, { jsonHit: 1 });
   assert.equal(second.performance.stages.catalogBuild, undefined);
@@ -119,9 +119,9 @@ test('保存失敗・読取失敗・書込直後の消失を区別し、正本�
     const { h } = ready(); h.properties.HF_PERFORMANCE = 'true'; h.state.cacheEnabled = mode !== 'missing';
     h.state.cacheWriteFails = mode === 'write'; h.state.cacheReadFails = mode === 'read';
     const result = h.call('getPublicCatalog'); assert.equal(result.ok, true);
-    if (mode === 'write') assert.equal(result.performance.cache.jsonWriteError, 1);
-    if (mode === 'read') { assert.equal(result.performance.cache.jsonReadError, 1); assert.equal(result.performance.cache.jsonReadbackError, 1); }
-    if (mode === 'missing') assert.equal(result.performance.cache.jsonWriteMissing, 1);
+    if (mode === 'write') assert.equal(result.performance.cache.jsonWriteError, 2);
+    if (mode === 'read') { assert.equal(result.performance.cache.jsonReadError, 2); assert.equal(result.performance.cache.jsonReadbackError, 2); }
+    if (mode === 'missing') assert.equal(result.performance.cache.jsonWriteMissing, 2);
     assert.doesNotMatch(JSON.stringify(result.performance), /private cache|exh_|example|fileId|secret/);
   }
 });

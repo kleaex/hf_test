@@ -1,9 +1,14 @@
 // ブラウザーで調整したJPEG/PNGだけを受信。GIF/BMPは選択時に静止画へ変換する。
 const HF_IMAGE_MAX_ = 1500000;
 
-function imageFolder_(config) {
+function imageFolder_(config, forRead) {
   return timed_('driveMetadata', function () {
     if (!/^[A-Za-z0-9_-]{10,}$/.test(config.imageFolderId)) fail_('IMAGE_CONFIG', '画像保存先が未設定です。運営に確認してください。');
+    if (forRead && driveMetadataApiAvailable_()) {
+      const metadata = privateReadMetadata_(config.imageFolderId);
+      if (metadata.mimeType !== 'application/vnd.google-apps.folder') fail_('IMAGE_CONFIG', '画像保存先がフォルダではありません。');
+      return { getId: function () { return config.imageFolderId; } };
+    }
     const folder = DriveApp.getFolderById(config.imageFolderId);
     privateDriveItem_(folder);
     return folder;
@@ -11,10 +16,13 @@ function imageFolder_(config) {
 }
 
 function privateDriveItem_(item) {
-  if (item.isTrashed() || !item.getOwner() || item.getSharingAccess() !== DriveApp.Access.PRIVATE
-      || item.getEditors().length || item.getViewers().length) {
-    fail_('IMAGE_CONFIG', '画像保存先または画像が共有されています。運営に確認してください。');
-  }
+  return timed_('driveMetadataLegacy', function () {
+    if (item.isTrashed() || !item.getOwner() || item.getSharingAccess() !== DriveApp.Access.PRIVATE
+        || item.getEditors().length || item.getViewers().length) {
+      fail_('IMAGE_CONFIG', '画像保存先または画像が共有されています。運営に確認してください。');
+    }
+    return null;
+  });
 }
 
 function imageBytes_(request) {
@@ -269,8 +277,14 @@ function readImage_(token, imageId, variant) {
 }
 
 function storedImageBytes_(config, image, checkedFolder, sharedCache) {
-  const folder = checkedFolder || imageFolder_(config);
+  const folder = checkedFolder || imageFolder_(config, true);
   const metadata = timed_('driveMetadata', function () {
+    if (driveMetadataApiAvailable_()) {
+      const details = privateReadMetadata_(image.fileId);
+      if (!Array.isArray(details.parents) || details.parents.length !== 1 || details.parents[0] !== folder.getId()) fail_('IMAGE_CONFIG', '画像の保存先が一致しません。');
+      if (details.mimeType !== image.contentType) fail_('IMAGE_INVALID', '保存画像の種類が一致しません。');
+      return { file: null, modified: sharedCache && image.bytes <= 60000 ? Date.parse(details.modifiedTime) : null };
+    }
     const file = DriveApp.getFileById(image.fileId);
     privateDriveItem_(file);
     const parents = file.getParents();
@@ -291,7 +305,7 @@ function storedImageBytes_(config, image, checkedFolder, sharedCache) {
       } catch (_) { /* キャッシュ破損時は正本を検証し直す。 */ }
     }
   }
-  const bytes = timed_('driveRead', function () { return file.getBlob().getBytes(); });
+  const bytes = timed_('driveRead', function () { return (file || DriveApp.getFileById(image.fileId)).getBlob().getBytes(); });
   if (bytes.length !== image.bytes || digest_(config, 'image-bytes', Utilities.base64Encode(bytes)) !== image.hash) fail_('IMAGE_INVALID', '保存画像の内容が一致しません。');
   if (key) keepSmallImage_(key, Utilities.base64Encode(bytes));
   return bytes;

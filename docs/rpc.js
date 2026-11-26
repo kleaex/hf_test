@@ -6,7 +6,7 @@
     'getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'stagePublicationImage', 'getPublicationImage', 'logout',
     'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'getAdminImage', 'logoutAdmin']);
   const stages = new Set(['lockWait', 'lockHeld', 'sheetHeader', 'sheetRead', 'sheetWrite', 'catalogBuild', 'catalogCache',
-    'imageValidate', 'thumbnailValidate', 'driveSave', 'driveRead', 'driveMetadata', 'imageAuthorize', 'imageCommit', 'sharedImageCache', 'cacheWrite']);
+    'imageValidate', 'thumbnailValidate', 'driveSave', 'driveRead', 'driveMetadata', 'driveMetadataApi', 'driveMetadataLegacy', 'imageIndexSeed', 'imageAuthorize', 'imageCommit', 'sharedImageCache', 'cacheWrite']);
   const cacheStatuses = new Set(['jsonMiss', 'jsonHit', 'jsonInvalid', 'jsonPartial', 'jsonReadError', 'jsonStored',
     'jsonOversize', 'jsonWriteError', 'jsonWriteVerified', 'jsonWriteMissing', 'jsonReadbackError']);
   window.hfPerformance = Object.freeze({
