@@ -6,6 +6,46 @@ const status = document.getElementById('status');
 const search = document.getElementById('search');
 const genre = document.getElementById('genre');
 let exhibitors = [];
+const imageCache = new Map();
+const imageQueue = [];
+let activeImages = 0;
+const lightbox = document.createElement('dialog');
+lightbox.className = 'image-dialog';
+const fullImage = document.createElement('img');
+const imageMessage = document.createElement('p');
+const closeImage = document.createElement('button'); closeImage.type = 'button'; closeImage.textContent = '閉じる';
+closeImage.addEventListener('click', () => lightbox.close());
+lightbox.append(closeImage, imageMessage, fullImage); document.body.append(lightbox);
+let openedImage = 0;
+lightbox.addEventListener('close', () => { openedImage++; fullImage.removeAttribute('src'); });
+
+function imageData(id, variant) {
+  const key = id + ':' + variant;
+  if (imageCache.has(key)) return imageCache.get(key);
+  const promise = new Promise((resolve, reject) => { imageQueue.push({ id, variant, resolve, reject }); drainImages(); });
+  imageCache.set(key, promise);
+  promise.catch(() => imageCache.delete(key));
+  return promise;
+}
+function drainImages() {
+  while (activeImages < 3 && imageQueue.length) {
+    const task = imageQueue.shift(); activeImages++;
+    (async () => {
+      const result = await window.hfRpc('getPublicImage', task.id, task.variant);
+      if (!['image/jpeg', 'image/png'].includes(result.contentType) || typeof result.base64 !== 'string'
+          || result.base64.length > 2000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(result.base64)) throw new Error('画像の形式が不正です。');
+      const binary = atob(result.base64);
+      return URL.createObjectURL(new Blob([Uint8Array.from(binary, char => char.charCodeAt(0))], { type: result.contentType }));
+    })().then(task.resolve, task.reject).finally(() => { activeImages--; drainImages(); });
+  }
+}
+const imageObserver = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+  for (const entry of entries) if (entry.isIntersecting) { imageObserver.unobserve(entry.target); entry.target.loadPreview(); }
+}, { rootMargin: '160px' }) : null;
+window.addEventListener('pagehide', () => {
+  for (const promise of imageCache.values()) promise.then(url => URL.revokeObjectURL(url), () => {});
+  imageCache.clear();
+});
 
 function element(tag, value, className) {
   const node = document.createElement(tag);
@@ -15,6 +55,24 @@ function element(tag, value, className) {
 }
 
 function imageLink(image, title, index) {
+  if (image.id) {
+    const link = element('button', undefined, 'cover image-link'); link.type = 'button';
+    link.setAttribute('aria-label', title + 'の画像' + (index + 1) + 'を拡大');
+    const img = element('img'); img.alt = title + 'の画像' + (index + 1); img.width = image.width; img.height = image.height; img.decoding = 'async';
+    link.append(img);
+    link.loadPreview = async () => {
+      try { img.src = await imageData(image.id, 'thumbnail'); }
+      catch (_) { link.replaceChildren(element('span', '画像の取得を再試行')); }
+    };
+    link.addEventListener('click', async () => {
+      const request = ++openedImage; imageMessage.textContent = '画像を読み込んでいます。'; fullImage.removeAttribute('src'); fullImage.alt = img.alt;
+      if (!lightbox.open) lightbox.showModal();
+      try { const url = await imageData(image.id, 'full'); if (request === openedImage) { fullImage.src = url; imageMessage.textContent = ''; } }
+      catch (_) { if (request === openedImage) imageMessage.textContent = '画像を読み込めませんでした。閉じて再試行してください。'; }
+    });
+    if (imageObserver) imageObserver.observe(link); else link.loadPreview();
+    return link;
+  }
   const link = element('a', undefined, 'cover image-link');
   link.href = image.src; link.target = '_blank'; link.rel = 'noopener noreferrer';
   const img = element('img');
@@ -25,6 +83,7 @@ function imageLink(image, title, index) {
 }
 
 function render() {
+  if (imageObserver) imageObserver.disconnect();
   const query = search.value.trim().normalize('NFKC').toLocaleLowerCase('ja');
   const selected = exhibitors.filter(exhibitor => {
     const text = [exhibitor.name, exhibitor.description,
@@ -65,11 +124,17 @@ function render() {
 
 async function load() {
   try {
-    const response = await fetch('./data/catalog.json', { cache: 'no-store' });
-    if (!response.ok) throw new Error('Catalog unavailable');
-    const data = validateCatalog(await response.json());
+    let raw;
+    if (window.HF_CONNECTION?.gasUrl) raw = (await window.hfRpc('getPublicCatalog')).data;
+    else {
+      const response = await fetch('./data/catalog.json', { cache: 'no-store' });
+      if (!response.ok) throw new Error('Catalog unavailable');
+      raw = await response.json();
+    }
+    const data = validateCatalog(raw, { allowLive: true });
     const publicationInfo = document.getElementById('publicationInfo');
     publicationInfo.textContent = data.sample ? 'サンプルカタログを表示しています。'
+      : data.live ? '保存済みの公開情報 ／ 取得日時 ' + new Date(data.generatedAt).toLocaleString('ja-JP')
       : '公開版 ' + data.releaseId + ' ／ 書出し日時 ' + new Date(data.generatedAt).toLocaleString('ja-JP');
     if (!data.sample) {
       document.getElementById('eventTitle').textContent = data.title;

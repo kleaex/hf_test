@@ -91,9 +91,11 @@ export async function installCatalog(source, { mode = 'preview', workspace = def
   const root = await fs.realpath(workspace);
   const publicRoot = mode === 'apply' ? await safeDirectory(root, 'docs') : await safeDirectory(root, 'tmp/catalog-preview/' + data.releaseId);
   if (mode === 'preview') {
-    for (const name of ['index.html', 'styles.css', 'app.js', 'catalog-schema.mjs']) {
+    for (const name of ['index.html', 'styles.css', 'app.js', 'catalog-schema.mjs', 'rpc.js']) {
       await atomicFile(path.join(publicRoot, name), await fs.readFile(await regularFile(root, 'docs/' + name)));
     }
+    // バックアップのプレビューから実GASへ接続せず、その版だけを表示する。
+    await atomicFile(path.join(publicRoot, 'connection.js'), Buffer.from('window.HF_CONNECTION = Object.freeze({ gasUrl: "" });\n'));
   }
   const releaseRoot = await safeDirectory(publicRoot, 'data/releases/' + data.releaseId);
   if ((await entries(releaseRoot)).some(name => !buffers.has(name))) throw new Error('反映先の公開版に余分なファイルがあります。');

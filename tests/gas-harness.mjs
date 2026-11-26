@@ -105,7 +105,7 @@ export function harness() {
       base64Encode: bytes => Buffer.from(bytes.map(byte => (byte + 256) % 256)).toString('base64'), newBlob: blob,
       computeHmacSha256Signature: (value, key) => [...crypto.createHmac('sha256', key).update(value).digest()].map(byte => byte > 127 ? byte - 256 : byte) }
   });
-  for (const name of ['Code', 'Store', 'Auth', 'Profile', 'Admin', 'Images', 'Publishing', 'AdminConsole']) vm.runInContext(fs.readFileSync(new URL('../gas/' + name + '.gs', import.meta.url), 'utf8'), context, { filename: name + '.gs' });
+  for (const name of ['Code', 'Store', 'Auth', 'Profile', 'Admin', 'Images', 'Publishing', 'AdminConsole', 'Transport', 'PublicCatalog']) vm.runInContext(fs.readFileSync(new URL('../gas/' + name + '.gs', import.meta.url), 'utf8'), context, { filename: name + '.gs' });
   const call = (name, ...args) => JSON.parse(JSON.stringify(context[name](...JSON.parse(JSON.stringify(args)))));
   const setup = () => call('setupExperiment_');
   const code = email => state.mail.findLast(mail => mail.to === email)?.body.match(/確認コード: (\d{6})/)[1];

@@ -15,3 +15,7 @@ select{appearance:none;padding-right:2.5rem;background-image:linear-gradient(45d
 footer{border-top:1px solid #d1ded6;color:#547164;font-size:.9rem}
 .book>*{min-width:0}.image-link{display:flex;text-decoration:none;align-self:start}.image-link img{display:block;width:100%;height:auto;max-height:180px;object-fit:contain}.book-images{margin-top:.75rem}.book-images summary{cursor:pointer;font-size:.9rem}.image-gallery{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}.image-gallery .image-link{width:95px}#publicationInfo{overflow-wrap:anywhere}.exhibitor p,.book p,.book h4{overflow-wrap:anywhere;white-space:pre-wrap}
 @media(max-width:640px){header,main,footer{padding:1.25rem}header{padding-top:2rem}.books{grid-template-columns:1fr}.exhibitor{padding:1rem}}
+.image-dialog{max-width:95vw;max-height:95vh;border:1px solid #536d5c;border-radius:6px;padding:1rem}
+.image-dialog::backdrop{background:rgb(0 0 0 / .65)}
+.image-dialog img{display:block;max-width:85vw;max-height:75vh;object-fit:contain;margin-top:.6rem}
+button.image-link{cursor:zoom-in;padding:0;color:inherit;font:inherit}

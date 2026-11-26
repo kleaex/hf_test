@@ -109,17 +109,20 @@ function validateImage_(request) {
   return inspected;
 }
 
-function uploadImage_(token, request) {
+function uploadImage_(token, request, staged) {
   const context = authenticate_(token);
-  keys_(request, ['publicationId', 'revision', 'requestId', 'contentType', 'base64']);
+  keys_(request, staged ? ['publicationId', 'revision', 'requestId', 'contentType', 'base64', 'thumbnail'] : ['publicationId', 'revision', 'requestId', 'contentType', 'base64']);
   if (typeof request.requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,80}$/.test(request.requestId)
       || !Number.isSafeInteger(request.revision) || request.revision < 0) fail_('VALIDATION', '画像の保存要求が正しくありません。');
   const state = json_(context.record.values[2]);
-  const book = state.publications.find(function (item) { return item.id === request.publicationId; });
+  const book = state.publications.find(function (item) { return item.id === request.publicationId; })
+    || (staged && /^draft_[a-f0-9]{32}$/.test(request.publicationId || '') ? { id: request.publicationId, images: [] } : null);
   if (!book) fail_('FORBIDDEN', 'この出店者に属さない作品へ画像を登録できません。');
   const bytes = imageBytes_(request);
-  const fingerprint = digest_(context.config, 'image-request', JSON.stringify({ publicationId: request.publicationId,
-    revision: request.revision, contentType: request.contentType, base64: request.base64 }));
+  const fingerprintInput = { publicationId: request.publicationId,
+    revision: request.revision, contentType: request.contentType, base64: request.base64 };
+  if (staged) { fingerprintInput.staged = true; fingerprintInput.thumbnail = request.thumbnail || null; }
+  const fingerprint = digest_(context.config, 'image-request', JSON.stringify(fingerprintInput));
   const receipt = state.receipts.find(function (item) { return item.id === request.requestId; });
   if (receipt) {
     if (receipt.fingerprint !== fingerprint) fail_('REQUEST_REUSED', '同じ保存要求IDを別の画像には使用できません。');
@@ -127,12 +130,23 @@ function uploadImage_(token, request) {
   }
   requireEditing_(context.config);
   if (state.revision !== request.revision) fail_('CONFLICT', '別の画面で更新されています。保存済みの内容を読み直してください。');
-  if ((book.images || []).length >= 3) fail_('IMAGE_LIMIT', '1作品に登録できる画像は3点までです。');
+  const draft = (state.stagedImages || []).filter(function (item) { return item.expiresAt > Date.now(); });
+  if (staged && draft.length >= 10) fail_('IMAGE_LIMIT', '仮保存画像は10点までです。保存するか、有効期限後に再試行してください。');
+  if (!staged && (book.images || []).length >= 3) fail_('IMAGE_LIMIT', '1作品に登録できる画像は3点までです。');
   const budget = state.imageBudget || {};
   const day = Math.floor(Date.now() / 86400000);
   if (budget.day === day && (budget.count >= 30 || budget.bytes + bytes.length > 30000000)) fail_('IMAGE_LIMIT', '本日の画像登録上限に達しました。運営に確認してください。');
   const folder = imageFolder_(context.config);
   const validated = validateImage_(request);
+  let thumbnail;
+  if (staged) {
+    keys_(request.thumbnail, ['contentType', 'base64']);
+    const small = validateImage_(request.thumbnail);
+    if (small.width > 400 || small.height > 400 || small.bytes.length > 120000) fail_('IMAGE_INVALID', 'サムネイルは長辺400px・120KB以内にしてください。');
+    thumbnail = { bytes: small.bytes, contentType: request.thumbnail.contentType, width: small.width, height: small.height };
+  }
+  const uploadedBytes = bytes.length + (thumbnail ? thumbnail.bytes.length : 0);
+  if (budget.day === day && budget.bytes + uploadedBytes > 30000000) fail_('IMAGE_LIMIT', '本日の画像登録上限に達しました。運営に確認してください。');
   const hash = digest_(context.config, 'image-bytes', Utilities.base64Encode(validated.bytes));
   const fileName = 'hf_' + digest_(context.config, 'image-file', context.config.eventId + ':' + context.record.values[0] + ':' + request.requestId)
     + (request.contentType === 'image/png' ? '.png' : '.jpg');
@@ -149,11 +163,22 @@ function uploadImage_(token, request) {
   const image = { id: 'img_' + random_(context.config, 'image-id').slice(0, 32), fileId: file.getId(),
     contentType: request.contentType, width: validated.width, height: validated.height,
     bytes: validated.bytes.length, hash: hash };
-  book.images = (book.images || []).concat([image]);
+  if (thumbnail) {
+    const name = fileName + '.thumbnail';
+    const matches = folder.getFilesByName(name);
+    const smallFile = matches.hasNext() ? matches.next() : folder.createFile(Utilities.newBlob(thumbnail.bytes, thumbnail.contentType, name));
+    privateDriveItem_(smallFile);
+    const smallHash = digest_(context.config, 'image-bytes', Utilities.base64Encode(thumbnail.bytes));
+    if (matches.hasNext() || digest_(context.config, 'image-bytes', Utilities.base64Encode(smallFile.getBlob().getBytes())) !== smallHash) fail_('REQUEST_REUSED', '画像の再送内容が一致しません。');
+    image.thumbnail = { fileId: smallFile.getId(), contentType: thumbnail.contentType, width: thumbnail.width,
+      height: thumbnail.height, bytes: thumbnail.bytes.length, hash: smallHash };
+  }
+  if (staged) state.stagedImages = draft.concat([{ publicationId: book.id, expiresAt: Date.now() + 86400000, image: image }]);
+  else book.images = (book.images || []).concat([image]);
   state.revision++;
   state.updatedAt = Date.now();
   state.imageBudget = { day: day, count: (budget.day === day ? budget.count : 0) + 1,
-    bytes: (budget.day === day ? budget.bytes : 0) + bytes.length };
+    bytes: (budget.day === day ? budget.bytes : 0) + uploadedBytes };
   state.receipts = state.receipts.concat([{ id: request.requestId, fingerprint: fingerprint, revision: state.revision,
     userId: context.user.values[0], savedAt: Date.now() }]).slice(-20);
   const serialized = JSON.stringify(state);
@@ -170,6 +195,7 @@ function readImage_(token, imageId) {
   state.publications.forEach(function (book) {
     (book.images || []).forEach(function (item) { if (item.id === imageId) image = item; });
   });
+  (state.stagedImages || []).forEach(function (item) { if (item.expiresAt > Date.now() && item.image.id === imageId) image = item.image; });
   if (!image) fail_('FORBIDDEN', 'この出店者に属さない画像は取得できません。');
   return { contentType: image.contentType, base64: Utilities.base64Encode(storedImageBytes_(context.config, image)) };
 }

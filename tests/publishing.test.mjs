@@ -34,7 +34,7 @@ async function fixture(t) {
     await fs.writeFile(path.join(source, entry.name), entry.bytes);
   }
   const workspace = path.join(root, 'workspace'); await fs.mkdir(path.join(workspace, 'docs/data'), { recursive: true });
-  for (const name of ['index.html', 'styles.css', 'app.js', 'catalog-schema.mjs', 'data/catalog.json']) await fs.copyFile(new URL('../docs/' + name, import.meta.url), path.join(workspace, 'docs', name));
+  for (const name of ['index.html', 'styles.css', 'app.js', 'catalog-schema.mjs', 'rpc.js', 'data/catalog.json']) await fs.copyFile(new URL('../docs/' + name, import.meta.url), path.join(workspace, 'docs', name));
   return { h, a, result, source, workspace, root };
 }
 
@@ -150,8 +150,8 @@ function publicClient(data, failFetch = false) {
     addEventListener(name, handler) { this.events[name] = handler; }
   }
   const elements = Object.fromEntries(['catalog', 'status', 'search', 'genre', 'publicationInfo', 'eventTitle', 'eventInfo', 'catalogNotice'].map(id => [id, new Element('div')]));
-  const document = { getElementById: id => elements[id], createElement: tag => new Element(tag) };
-  return { elements, document, context: vm.createContext({ document, validateCatalog, console: { error() {} },
+  const document = { body: new Element('body'), getElementById: id => elements[id], createElement: tag => new Element(tag) };
+  return { elements, document, context: vm.createContext({ document, window: { addEventListener() {} }, validateCatalog, console: { error() {} },
     fetch: async () => ({ ok: !failFetch, json: async () => data }) }) };
 }
 

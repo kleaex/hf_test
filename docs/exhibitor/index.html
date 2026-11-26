@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <script src="../connection.js"></script><script src="../rpc.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>出店者編集（実験用）</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f4f0; color: #242c30; font-family: sans-serif; line-height: 1.7; }
+    main { max-width: 760px; margin: 2rem auto; padding: 0 1rem 3rem; }
+    h1 { font-size: 1.65rem; } h2 { font-size: 1.25rem; }
+    section, .book { background: white; border: 1px solid #c6cdca; border-radius: 8px; padding: 1.25rem; margin: 1rem 0; }
+    label { display: block; margin-top: 1rem; font-weight: bold; }
+    input, textarea, select { display: block; width: 100%; min-width: 0; font: inherit; padding: .6rem; border: 1px solid #7a8783; border-radius: 4px; color: inherit; background: white; }
+    textarea { min-height: 7rem; resize: vertical; }
+    button { font: inherit; padding: .6rem 1rem; border: 1px solid #47665a; border-radius: 4px; background: #fff; color: #244c3b; cursor: pointer; }
+    button.primary { background: #244c3b; color: white; }
+    button:disabled { opacity: .55; cursor: default; }
+    .actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
+    .note { color: #4d5c56; font-size: .9rem; }
+    #result { padding: .8rem; border-left: 4px solid #47665a; overflow-wrap: anywhere; }
+    #result:empty { display: none; }
+    fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+    [hidden] { display: none !important; }
+    .image-list { display: grid; gap: .75rem; margin: 1rem 0; }
+    .image-item { border: 1px solid #c6cdca; padding: .75rem; overflow-wrap: anywhere; }
+    .image-item img, #imagePreview { display: block; max-width: 100%; max-height: 400px; width: auto; height: auto; margin: .5rem auto; }
+    :focus-visible { outline: 3px solid #af6900; outline-offset: 3px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>出店者編集 <small>実験用</small></h1>
+  <p>登録されたテスト宛先で本人確認し、ご自身の出店情報を編集できます。架空の出店名・頒布物を使用してください。</p>
+  <div class="actions"><button id="check" type="button">接続を確認</button></div>
+  <p id="result" role="status" aria-live="polite"></p>
+  <p id="sessionNotice" class="note" hidden></p>
+  <div class="actions"><button id="restore" type="button" hidden>ログインの復元を再試行</button></div>
+  <section id="login">
+    <h2>メールでログイン</h2>
+    <form id="emailForm">
+      <label for="email">登録済みのテスト用メールアドレス</label>
+      <input id="email" type="email" autocomplete="email" maxlength="254" required>
+      <div class="actions"><button id="sendCode" type="submit">確認コードを送信・再送</button></div>
+    </form>
+    <form id="codeForm">
+      <label for="code">確認コード（6桁）</label>
+      <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+      <p class="note">コードは10分間有効です。再送は60秒後から可能です。</p>
+      <div class="actions"><button class="primary" type="submit">ログイン</button></div>
+    </form>
+  </section>
+  <section id="editor" hidden>
+    <h2>出店情報</h2>
+    <p id="savedState" class="note"></p>
+    <p id="editState" class="note"></p>
+    <form id="profileForm">
+      <fieldset id="fields">
+        <label for="name">出店名（必須・80文字まで）</label><input id="name" maxlength="80" required>
+        <label for="description">紹介文（2,000文字まで）</label><textarea id="description" maxlength="2000"></textarea>
+        <label for="genre">ジャンル（40文字まで）</label><input id="genre" maxlength="40">
+        <h2>頒布物</h2>
+        <p class="note">10点まで登録できます。削除は「保存」で確定します。</p>
+        <div id="books"></div>
+        <button id="addBook" type="button">頒布物を追加</button>
+      </fieldset>
+      <div class="actions"><button id="save" class="primary" type="submit">保存して公開</button></div>
+    </form>
+    <section id="imageConfirm" hidden>
+      <h2>画像を確認して登録</h2>
+      <p id="imageDetails"></p>
+      <img id="imagePreview" alt="登録前の画像プレビュー">
+      <p class="note">この表示を確認して登録してください。画像は非公開の仮保存です。「保存して公開」でカタログへ反映します。</p>
+      <div class="actions"><button id="uploadImage" class="primary" type="button">この画像を登録</button><button id="cancelImage" type="button">取り消す</button></div>
+    </section>
+    <div class="actions">
+      <button id="reload" type="button">保存済みの内容を読み直す</button>
+      <button id="logout" type="button">ログアウト</button>
+    </div>
+    <p class="note">公開対象の出店者は保存後、カタログの次回読み込み時に反映されます。同じタブでは再読み込み後も有効期限内のログインを復元します。未保存の入力は復元されません。</p>
+  </section>
+<p><a href="../">公開カタログへ</a></p></main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let token = null;
+let data = null;
+let dirty = false;
+let busy = false;
+let pending = null;
+let bookSequence = 0;
+let preparedImage = null;
+const SESSION_KEY = 'hf_test.exhibitorSession.v1';
+
+function sessionNotice() {
+  $('sessionNotice').hidden = false;
+  $('sessionNotice').textContent = 'このブラウザーではログイン情報を一時保存できません。再読み込み後は再ログインが必要です。';
+}
+function rememberSession(value) {
+  try {
+    if (value) window.sessionStorage.setItem(SESSION_KEY, value);
+    else window.sessionStorage.removeItem(SESSION_KEY);
+    return true;
+  } catch (_) { sessionNotice(); return false; }
+}
+function storedSession() {
+  try {
+    const value = window.sessionStorage.getItem(SESSION_KEY);
+    if (value === null) return null;
+    if (/^[0-9a-f]{64}$/.test(value)) return value;
+    rememberSession(null);
+  } catch (_) { sessionNotice(); }
+  return null;
+}
+async function restoreSession() {
+  const savedToken = storedSession();
+  $('restore').hidden = true;
+  if (!savedToken) return;
+  message('ログイン情報を確認しています。');
+  try {
+    // 保存されたトークンだけではログイン扱いにしない。期限・失効・所属は毎回GASが確認する。
+    const result = await rpc('getMyProfile', savedToken);
+    token = savedToken;
+    render(result.data);
+    message('ログインを復元し、保存済みの内容を読み込みました。');
+  } catch (error) {
+    if (['UNAUTHENTICATED', 'FORBIDDEN'].includes(error.code)) {
+      rememberSession(null);
+      message('ログインを継続できません。メール確認コードで再ログインしてください。');
+    } else {
+      // 通信失敗と失効を区別し、再試行できるように保存したトークンは残す。
+      $('restore').hidden = false;
+      message('ログイン情報を確認できませんでした。「ログインの復元を再試行」を押してください。');
+    }
+  }
+}
+
+function message(text) { $('result').textContent = text; }
+function controls() {
+  const closed = data && data.editable === false;
+  $('fields').disabled = busy || !!pending || !!preparedImage;
+  for (const node of $('fields').querySelectorAll('input, textarea, select, button')) {
+    node.disabled = !!closed && node.dataset.readAction !== 'true';
+  }
+  $('save').disabled = busy || !!preparedImage || !!closed;
+  $('save').textContent = pending ? '同じ保存を再試行・結果確認' : '保存して公開';
+  $('reload').disabled = busy;
+  $('logout').disabled = busy;
+  $('check').disabled = busy;
+  $('restore').disabled = busy;
+  for (const node of document.querySelectorAll('#login input, #login button')) node.disabled = busy;
+  $('addBook').disabled = !!closed || $('books').children.length >= 10;
+  $('uploadImage').disabled = busy;
+  $('cancelImage').disabled = busy || !!(preparedImage && preparedImage.committing);
+}
+async function rpc(method, ...args) {
+  try { return await window.hfRpc(method, ...args); }
+  catch (error) { if (error.code === 'UNAUTHENTICATED') rememberSession(null); throw error; }
+}
+async function action(operation) {
+  if (busy) return;
+  busy = true; controls();
+  try { await operation(); }
+  catch (error) { message(error.message || '処理を完了できませんでした。'); }
+  finally { busy = false; controls(); }
+}
+function input(labelText, key, value, options = {}) {
+  const label = document.createElement('label');
+  const id = 'book-' + bookSequence + '-' + key;
+  label.htmlFor = id; label.textContent = labelText;
+  const field = document.createElement(options.area ? 'textarea' : 'input');
+  field.id = id; field.dataset.key = key; field.value = value;
+  if (options.max) field.maxLength = options.max;
+  if (options.required) field.required = true;
+  if (options.number) { field.type = 'number'; field.min = '0'; field.max = '1000000'; field.step = '1'; field.required = true; }
+  return [label, field];
+}
+function addBook(book) {
+  bookSequence++;
+  const card = document.createElement('div'); card.className = 'book'; card.dataset.id = book.id || '';
+  if (!book.id) card.dataset.draftId = book.draftId || 'draft_' + crypto.randomUUID().replace(/-/g, '');
+  card.dataset.imageIds = JSON.stringify((book.images || []).map(image => image.id));
+  card.append(...input('作品名（必須・120文字まで）', 'title', book.title, { max: 120, required: true }),
+    ...input('著者（120文字まで）', 'author', book.author, { max: 120 }),
+    ...input('紹介文（2,000文字まで）', 'description', book.description, { max: 2000, area: true }),
+    ...input('価格（円）', 'price', book.price, { number: true }));
+  const label = document.createElement('label'); label.textContent = '刊行区分'; label.htmlFor = 'book-' + bookSequence + '-release';
+  const select = document.createElement('select'); select.dataset.key = 'releaseType'; select.id = label.htmlFor;
+  for (const text of ['新刊', '既刊', 'その他']) { const option = document.createElement('option'); option.value = text; option.textContent = text; select.append(option); }
+  select.value = book.releaseType;
+  const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'この頒布物を削除';
+  remove.addEventListener('click', () => { card.remove(); dirty = true; controls(); });
+  const actions = document.createElement('div'); actions.className = 'actions'; actions.append(remove);
+  card.append(label, select, actions);
+  const images = document.createElement('div'); images.className = 'image-list';
+  (book.images || []).forEach(image => {
+    const item = document.createElement('div'); item.className = 'image-item';
+    const status = document.createElement('p'); status.textContent = image.width + '×' + image.height + 'px ／ ' + Math.ceil(image.bytes / 1000) + 'KB';
+    const preview = document.createElement('img'); preview.alt = book.title + 'の登録画像'; preview.hidden = true;
+    const show = document.createElement('button'); show.type = 'button'; show.dataset.readAction = 'true'; show.textContent = '画像を表示';
+    show.addEventListener('click', () => action(async () => {
+      const result = await rpc('getPublicationImage', token, image.id);
+      if (result.contentType !== 'image/jpeg' && result.contentType !== 'image/png') throw new Error('画像形式を確認できません。');
+      preview.src = 'data:' + result.contentType + ';base64,' + result.base64; preview.hidden = false;
+    }));
+    const erase = document.createElement('button'); erase.type = 'button'; erase.textContent = '画像を削除';
+    erase.addEventListener('click', () => {
+      card.dataset.imageIds = JSON.stringify(JSON.parse(card.dataset.imageIds).filter(id => id !== image.id));
+      item.remove(); dirty = true; controls();
+    });
+    const earlier = document.createElement('button'); earlier.type = 'button'; earlier.textContent = '先頭にする';
+    earlier.addEventListener('click', () => {
+      card.dataset.imageIds = JSON.stringify([image.id, ...JSON.parse(card.dataset.imageIds).filter(id => id !== image.id)]);
+      images.prepend(item); dirty = true;
+    });
+    const imageActions = document.createElement('div'); imageActions.className = 'actions'; imageActions.append(show, earlier, erase);
+    item.append(status, preview, imageActions); images.append(item);
+  });
+  card.append(images);
+  const uploadLabel = document.createElement('label'); uploadLabel.textContent = '画像を追加（1作品3点まで）';
+  const upload = document.createElement('input'); upload.type = 'file';
+  upload.id = 'book-' + bookSequence + '-upload'; uploadLabel.htmlFor = upload.id;
+  upload.accept = '.jpg,.jpeg,.png,.gif,.bmp,image/jpeg,image/png,image/gif,image/bmp';
+  upload.addEventListener('change', () => action(async () => {
+    const file = upload.files && upload.files[0]; upload.value = '';
+    if (!file) return;
+    if (!data.imagesConfigured) throw new Error('画像保存先が未設定です。運営に確認してください。');
+    if (JSON.parse(card.dataset.imageIds).length >= 3) throw new Error('画像は3点までです。不要な画像を削除してから追加してください。');
+    const image = await prepareImage(file);
+    preparedImage = { request: { publicationId: book.id || card.dataset.draftId, revision: data.revision, requestId: crypto.randomUUID(),
+      contentType: image.contentType, base64: image.base64, thumbnail: image.thumbnail }, committing: false };
+    $('imagePreview').src = 'data:' + image.contentType + ';base64,' + image.base64;
+    $('imageDetails').textContent = image.width + '×' + image.height + 'px ／ ' + Math.ceil(image.bytes / 1000) + 'KB（静止画）';
+    $('imageConfirm').hidden = false; message('画像の見え方を確認して登録してください。');
+  }));
+  const note = document.createElement('p'); note.className = 'note';
+  note.textContent = 'JPEG・PNG・GIF・BMP、元画像20MBまで。長辺2,400px・1.5MB以内に調整します。GIFは先頭の静止画、一覧の先頭が代表画像になります。仮保存後に「保存して公開」で反映します。';
+  card.append(uploadLabel, upload, note); $('books').append(card);
+}
+function render(next) {
+  data = next; pending = null; dirty = false; clearPreparedImage();
+  $('name').value = data.profile.name; $('description').value = data.profile.description; $('genre').value = data.profile.genre;
+  $('books').replaceChildren(); data.publications.forEach(addBook);
+  $('savedState').textContent = '更新番号 ' + data.revision + (data.updatedAt ? ' ／ 保存日時 ' + new Date(data.updatedAt).toLocaleString('ja-JP') : ' ／ まだ保存されていません');
+  $('editState').textContent = data.editable ? '編集期限: ' + new Date(data.editDeadline).toLocaleString('ja-JP')
+    : '編集期間外です。保存・追加・削除はできません。';
+  $('login').hidden = true; $('editor').hidden = false; controls();
+}
+function request() {
+  const publications = Array.from($('books').children, card => {
+    const book = { id: card.dataset.id || null };
+    if (!book.id) book.draftId = card.dataset.draftId;
+    for (const field of card.querySelectorAll('[data-key]')) book[field.dataset.key] = field.dataset.key === 'price' ? Number(field.value) : field.value;
+    book.imageIds = JSON.parse(card.dataset.imageIds);
+    return book;
+  });
+  return { exhibitorId: data.exhibitorId, revision: data.revision, requestId: crypto.randomUUID(),
+    profile: { name: $('name').value, description: $('description').value, genre: $('genre').value }, publications };
+}
+$('check').addEventListener('click', () => action(async () => { await rpc('getSystemStatus'); message('GASと保存先への接続を確認できました。'); }));
+$('emailForm').addEventListener('submit', event => {
+  event.preventDefault(); action(async () => { const result = await rpc('requestLoginCode', $('email').value); $('code').value = ''; message(result.message); });
+});
+$('codeForm').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!$('emailForm').reportValidity()) return;
+  action(async () => {
+    const result = await rpc('verifyLoginCode', $('email').value, $('code').value);
+    token = result.token; rememberSession(token); $('restore').hidden = true;
+    $('code').value = ''; $('email').value = ''; render(result.data); message('ログインしました。有効期限は2時間です。');
+  });
+});
+$('fields').addEventListener('input', event => { if (!event.target || event.target.type !== 'file') dirty = true; });
+$('addBook').addEventListener('click', () => {
+  if ($('books').children.length >= 10) return;
+  addBook({ id: null, title: '', author: '', description: '', price: 0, releaseType: '新刊' }); dirty = true; controls();
+});
+$('profileForm').addEventListener('submit', event => {
+  event.preventDefault(); action(async () => {
+    if (preparedImage || !data.editable) return;
+    if (!pending) pending = request();
+    controls(); message('保存しています。');
+    try {
+      const result = await rpc('saveProfile', token, pending);
+      render(result.data);
+      message(result.replayed ? '保存済みであることを確認しました。最新の保存内容を表示しています。' : '保存しました。');
+    } catch (error) {
+      // 通信失敗・一時障害は同じ内容とIDで再送。編集を止め、二重作成を防ぐ。
+      if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) {
+        message('保存結果が未確認です。「同じ保存を再試行・結果確認」を押してください。');
+      } else {
+        pending = null;
+        if (error.code === 'EDIT_CLOSED') data.editable = false;
+        message(error.message);
+      }
+    }
+  });
+});
+$('reload').addEventListener('click', () => {
+  if ((dirty || pending || preparedImage) && !confirm('未保存の入力・登録前の画像を破棄し、保存済みの内容を読み直しますか？')) return;
+  action(async () => { const result = await rpc('getMyProfile', token); render(result.data); message('保存済みの内容を読み込みました。'); });
+});
+$('logout').addEventListener('click', () => {
+  if ((dirty || pending || preparedImage) && !confirm('未保存の入力・登録前の画像を破棄してログアウトしますか？')) return;
+  action(async () => {
+    // 失効確認が取れるまでトークンを保持し、ログアウトを再試行できるようにする。
+    try { await rpc('logout', token); }
+    catch (error) { if (error.code !== 'UNAUTHENTICATED' && error.code !== 'FORBIDDEN') throw error; }
+    token = null; data = null; pending = null; dirty = false;
+    clearPreparedImage();
+    rememberSession(null); $('restore').hidden = true;
+    $('profileForm').reset(); $('books').replaceChildren(); $('editor').hidden = true; $('login').hidden = false;
+    message('ログアウトしました。');
+  });
+});
+function clearPreparedImage() {
+  preparedImage = null; $('imagePreview').removeAttribute('src'); $('imageConfirm').hidden = true;
+  $('uploadImage').textContent = 'この画像を登録';
+}
+$('cancelImage').addEventListener('click', () => { if (preparedImage && !preparedImage.committing) { clearPreparedImage(); controls(); } });
+$('uploadImage').addEventListener('click', () => action(async () => {
+  if (!preparedImage) return;
+  preparedImage.committing = true; controls(); message('画像を登録しています。');
+  try {
+    const draft = request();
+    const result = await rpc('stagePublicationImage', token, preparedImage.request);
+    const staged = result.data.stagedImages.find(item => item.publicationId === preparedImage.request.publicationId && !data.stagedImages?.some(old => old.image.id === item.image.id));
+    if (!staged) throw { network: true, message: '仮保存画像を確認できません。保存済みの内容を読み直してください。' };
+    const next = { ...result.data, profile: draft.profile, publications: draft.publications.map(book => {
+      const saved = data.publications.find(item => item.id === book.id);
+      const pool = [...(saved?.images || []), ...(data.stagedImages || []).map(item => item.image), staged.image];
+      const images = book.imageIds.map(id => pool.find(image => image.id === id)).filter(Boolean);
+      if ((book.id || book.draftId) === staged.publicationId) images.push(staged.image);
+      const copy = { ...book, images }; delete copy.imageIds; return copy;
+    }) };
+    render(next); dirty = true; message('画像を仮保存しました。「保存して公開」で反映してください。');
+  } catch (error) {
+    if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) {
+      $('uploadImage').textContent = '同じ画像登録を再試行・結果確認';
+      message('登録結果が未確認です。同じ画像登録を再試行するか、保存済みの内容を読み直してください。');
+    } else {
+      if (error.code === 'EDIT_CLOSED') data.editable = false;
+      clearPreparedImage(); message(error.message);
+    }
+  }
+}));
+
+async function prepareThumbnail(bitmap) {
+  const canvas = document.createElement('canvas');
+  let scale = Math.min(1, 400 / Math.max(bitmap.width, bitmap.height));
+  for (let attempt = 0; attempt < 5; attempt++, scale *= .75) {
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('サムネイルの作成に失敗しました。');
+    context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', .8));
+    if (blob && blob.size <= 120000 && blob.type === 'image/jpeg') {
+      const bytes = new Uint8Array(await blob.arrayBuffer()); let binary = '';
+      for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      return { contentType: blob.type, base64: btoa(binary) };
+    }
+  }
+  throw new Error('サムネイルを調整できませんでした。小さい画像を選択してください。');
+}
+function sourceImageSize(bytes) {
+  const u16 = at => bytes[at] * 256 + bytes[at + 1];
+  const le32 = at => bytes[at] + bytes[at + 1] * 256 + bytes[at + 2] * 65536 + bytes[at + 3] * 16777216;
+  const be32 = at => bytes[at] * 16777216 + bytes[at + 1] * 65536 + bytes[at + 2] * 256 + bytes[at + 3];
+  if (bytes.slice(0, 8).join(',') === '137,80,78,71,13,10,26,10' && bytes.length >= 33) return { width: be32(16), height: be32(20) };
+  if (String.fromCharCode(...bytes.slice(0, 6)).match(/^GIF8[79]a$/) && bytes.length >= 13) return { width: bytes[6] + 256 * bytes[7], height: bytes[8] + 256 * bytes[9] };
+  if (bytes[0] === 66 && bytes[1] === 77 && bytes.length >= 26 && le32(14) >= 40) {
+    const height = le32(22);
+    return { width: le32(18), height: height > 2147483647 ? 4294967296 - height : height };
+  }
+  if (bytes[0] === 255 && bytes[1] === 216) {
+    let at = 2;
+    while (at + 4 <= bytes.length) {
+      if (bytes[at++] !== 255) break;
+      while (bytes[at] === 255) at++;
+      const marker = bytes[at++], length = u16(at);
+      if (length < 2 || at + length > bytes.length || marker === 218) break;
+      if ([192, 193, 194].includes(marker) && length >= 8) return { width: u16(at + 5), height: u16(at + 3) };
+      at += length;
+    }
+  }
+  throw new Error('JPEG・PNG・GIF・BMP画像を選択してください。画像の内容を読み取れませんでした。');
+}
+async function prepareImage(file) {
+  if (file.size < 1 || file.size > 20000000) throw new Error('元画像は20MB以内で選択してください。');
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const size = sourceImageSize(bytes);
+  if (!Number.isInteger(size.width) || !Number.isInteger(size.height) || size.width < 1 || size.height < 1
+      || size.width * size.height > 60000000) throw new Error('元画像は6,000万画素以内で選択してください。');
+  if (typeof createImageBitmap !== 'function') throw new Error('このブラウザーでは画像を調整できません。別のブラウザーでお試しください。');
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  try {
+    if (bitmap.width * bitmap.height > 60000000) throw new Error('元画像の画素数が上限を超えています。');
+    const canvas = document.createElement('canvas');
+    let scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+    for (let attempt = 0; attempt < 5; attempt++, scale *= .8) {
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('画像の調整に失敗しました。');
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const encode = (type, quality) => new Promise(resolve => canvas.toBlob(resolve, type, quality));
+      // 線画・透過を保てるPNGが上限内なら優先。大きければ白背景JPEGをプレビューする。
+      let blob = await encode('image/png');
+      if (!blob || blob.size > 1500000) {
+        context.globalCompositeOperation = 'destination-over'; context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+        context.globalCompositeOperation = 'source-over';
+        for (const quality of [.92, .84, .76]) {
+          blob = await encode('image/jpeg', quality);
+          if (blob && blob.size <= 1500000) break;
+        }
+      }
+      if (blob && blob.size <= 1500000 && ['image/png', 'image/jpeg'].includes(blob.type)) {
+        const output = new Uint8Array(await blob.arrayBuffer());
+        let binary = '';
+        for (let index = 0; index < output.length; index += 8192) binary += String.fromCharCode(...output.subarray(index, index + 8192));
+        const thumbnail = await prepareThumbnail(bitmap);
+        return { base64: btoa(binary), contentType: blob.type, bytes: blob.size, width: canvas.width, height: canvas.height, thumbnail };
+      }
+    }
+    throw new Error('1.5MB以内に調整できませんでした。小さい画像を選択してください。');
+  } finally { bitmap.close(); }
+}
+window.addEventListener('beforeunload', event => { if (dirty || pending || preparedImage) { event.preventDefault(); event.returnValue = ''; } });
+$('restore').addEventListener('click', () => action(restoreSession));
+controls();
+action(restoreSession);
+</script>
+</body>
+</html>

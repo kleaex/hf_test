@@ -1,5 +1,5 @@
 // 公開項目・ローカル画像参照だけを許可する。GASの業務データは受け取らない。
-export function validateCatalog(data, { releaseOnly = false } = {}) {
+export function validateCatalog(data, { releaseOnly = false, allowLive = false } = {}) {
   const fail = () => { throw new Error('公開カタログの形式が正しくありません。'); };
   const keys = (value, allowed) => {
     if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key))) fail();
@@ -7,16 +7,18 @@ export function validateCatalog(data, { releaseOnly = false } = {}) {
   const string = (value, max, required = false) => {
     if (typeof value !== 'string' || value.length > max || (required && !value.trim()) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) fail();
   };
-  keys(data, ['schemaVersion', 'sample', 'eventId', 'title', 'eventDate', 'venue', 'releaseId', 'generatedAt', 'exhibitors']);
+  keys(data, ['schemaVersion', 'sample', 'eventId', 'title', 'eventDate', 'venue', 'releaseId', 'generatedAt', 'exhibitors', 'live']);
+  const live = data.live === true && allowLive && !releaseOnly && data.sample === false;
+  if (data.live !== undefined && !live) fail();
   if (data.schemaVersion !== 1 || typeof data.sample !== 'boolean' || (releaseOnly && data.sample)) fail();
   if (!data.sample) {
-    if (!/^rel_[0-9]{13}_[a-f0-9]{12}$/.test(data.releaseId || '') || !/^[A-Za-z0-9_-]{1,64}$/.test(data.eventId || '')
+    if ((!live && !/^rel_[0-9]{13}_[a-f0-9]{12}$/.test(data.releaseId || '')) || (live && data.releaseId !== undefined) || !/^[A-Za-z0-9_-]{1,64}$/.test(data.eventId || '')
         || !Number.isSafeInteger(data.generatedAt) || data.generatedAt < 1) fail();
     string(data.title, 120, true);
     if (data.eventDate !== undefined) { string(data.eventDate, 10); if (data.eventDate && !/^\d{4}-\d{2}-\d{2}$/.test(data.eventDate)) fail(); }
     if (data.venue !== undefined) string(data.venue, 200);
   }
-  if (!Array.isArray(data.exhibitors) || data.exhibitors.length > 10 || (!data.sample && !data.exhibitors.length)) fail();
+  if (!Array.isArray(data.exhibitors) || data.exhibitors.length > 10 || (!live && !data.sample && !data.exhibitors.length)) fail();
   const ids = new Set(), booths = new Set(), paths = new Set();
   const id = (value, pattern) => { if (typeof value !== 'string' || !pattern.test(value) || ids.has(value)) fail(); ids.add(value); };
   for (const exhibitor of data.exhibitors) {
@@ -33,6 +35,13 @@ export function validateCatalog(data, { releaseOnly = false } = {}) {
       const images = data.sample && book.images === undefined ? [] : book.images;
       if (!Array.isArray(images) || images.length > 3) fail();
       for (const image of images) {
+        if (live) {
+          keys(image, ['id', 'width', 'height']);
+          id(image.id, /^img_[a-f0-9]{32}$/);
+          if (!Number.isInteger(image.width) || !Number.isInteger(image.height) || image.width < 1 || image.height < 1
+              || image.width > 2400 || image.height > 2400) fail();
+          continue;
+        }
         keys(image, ['src', 'width', 'height']);
         const prefix = './data/releases/' + data.releaseId + '/images/';
         if (data.sample || typeof image.src !== 'string' || !image.src.startsWith(prefix)

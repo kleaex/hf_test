@@ -11,13 +11,13 @@ function exportCatalog_() {
   });
 }
 
-function buildCatalogRelease_(config, settings, releaseId, generatedAt, includeFiles) {
+function buildCatalogRelease_(config, settings, releaseId, generatedAt, includeFiles, live) {
     keys_(settings, ['title', 'exhibitors', 'eventDate', 'venue']);
     const title = text_(settings.title, 120, true);
     const eventDate = text_(settings.eventDate || '', 10, false);
     const venue = text_(settings.venue || '', 200, false);
     if (eventDate && (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate) || !Number.isFinite(Date.parse(eventDate)))) fail_('PUBLICATION_CONFIG', '開催日が不正です。');
-    if (!Array.isArray(settings.exhibitors) || settings.exhibitors.length < 1 || settings.exhibitors.length > 10) {
+    if (!Array.isArray(settings.exhibitors) || (!live && settings.exhibitors.length < 1) || settings.exhibitors.length > 10) {
       fail_('PUBLICATION_CONFIG', '公開対象の出店者を1〜10組指定してください。');
     }
     const db = database_(config);
@@ -58,7 +58,7 @@ function buildCatalogRelease_(config, settings, releaseId, generatedAt, includeF
                 fail_('IMAGE_INVALID', '公開画像の寸法・容量が一致しません。');
               }
               totalBytes += image.bytes;
-              if (totalBytes > 20000000) fail_('PUBLICATION_LIMIT', '書出しは画像合計20MBまでです。公開対象を見直してください。');
+              if (!live && totalBytes > 20000000) fail_('PUBLICATION_LIMIT', '書出しは画像合計20MBまでです。公開対象を見直してください。');
               const path = 'images/' + image.id + (image.contentType === 'image/png' ? '.png' : '.jpg');
               if (includeFiles) {
                 const bytes = storedImageBytes_(config, image);

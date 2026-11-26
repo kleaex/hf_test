@@ -1,5 +1,106 @@
 # 実験環境の設定
 
+## HP内の画面と自動反映へ移行する
+
+今回はこちらの手順を使う。後半のGAS画面・ZIP手動公開の説明は旧方式の互換用で、通常操作には使わない。
+実験専用GAS・Sheets・非公開Driveをそのまま使用し、既存の利用者ID・作品ID・認証秘密値を変更しない。
+
+### 1. GASへ追加・更新するファイル
+
+| repoのファイル | GASでの名前 | 操作 |
+| --- | --- | --- |
+| gas/Transport.gs | Transport（スクリプト） | **追加**。許可originを検証して通信HTMLを生成 |
+| gas/Bridge.html | Bridge（HTML） | **追加**。HPとの通信専用 |
+| gas/PublicCatalog.gs | PublicCatalog（スクリプト） | **追加**。保存済みカタログ・公開画像の取得 |
+| gas/Code.gs | Code | **置換**。bridge入口・公開取得・仮保存API |
+| gas/Profile.gs | Profile | **置換**。仮保存画像を含む最終保存 |
+| gas/Images.gs | Images | **置換**。画像・サムネイルの非公開仮保存 |
+| gas/Publishing.gs | Publishing | **置換**。公開項目の選別処理をライブ取得と共用 |
+| gas/Store.gs / Auth.gs / Admin.gs / AdminConsole.gs | 各同名 | 継続使用。未配置・古い場合はrepo版を配置 |
+| gas/Index.html / AdminIndex.html | 各同名HTML | 旧画面の互換用。通常はHPの画面を使う |
+| gas/appsscript.json | appsscript.json | 今回の権限追加なし。既存のSheets・メール・Drive権限を維持 |
+
+Transportはスクリプトファイル、BridgeはHTMLファイルとして追加する。
+tests/ は配置しない。既存のデータ行やシートを削除・初期化し直さない。
+Admins・AdminSessions・EventSettingsが未作成の場合だけ、後半「運営画面を既存環境へ追加する」の初回設定を先に行う。
+
+### 2. Script Propertiesを1件追加
+
+`HF_FRONTEND_ORIGINS` に、HPの**originだけ**のJSON配列を指定する。
+
+```json
+["https://kleaex.github.io"]
+```
+
+`/hf_test/` 等のパスや末尾の `/` は付けない。ローカルから実GASを確認する場合だけ、使用するoriginも追加する。
+
+```json
+["https://kleaex.github.io","http://127.0.0.1:8080"]
+```
+
+`localhost` と `127.0.0.1`、ポート違いは別origin。必要なものだけを登録する。
+同じGitHub Pages origin上の別ページとはブラウザー上の権限境界を分けられない。許可するoriginの管理下にあるページを信頼する構成である。
+HF_AUTH_SECRET等の既存値は維持する。HF_EXPORT_FOLDER_IDは旧ZIP書き出しを使う場合だけ必要で、自動反映には不要。
+HF_EDIT_DEADLINE・旧HF_PUBLICATION_CONFIG_JSONは初期移行用。EventSettings作成後の日常設定はHPの運営画面で行う。
+
+### 3. GASを新しいバージョンへ更新
+
+「デプロイ → デプロイを管理 → 編集 → 新バージョン → デプロイ」。
+実行するユーザーは所有者の「自分」、アクセスできるユーザーはGoogleログインを求めない「全員」。
+アプリ自身が出店者・運営のメール確認とセッション検証を行う。Spreadsheet・Driveのリンク共有は制限付きのまま。
+更新後の `/exec` URLを確認する。既存デプロイの更新なら通常はURLを維持できる。`/dev` URLは使用しない。
+
+### 4. HPの接続設定とファイルを配信
+
+`docs/connection.js` の空欄に、この実験用GASの `/exec` URLを設定する。
+
+```js
+window.HF_CONNECTION = Object.freeze({ gasUrl: 'https://script.google.com/macros/s/実際のデプロイID/exec' });
+```
+
+このURLは公開可能な通信先。認証秘密値・Spreadsheet ID・Drive ID・メール宛先を記載しない。
+次のファイルをすべてPagesへ配信する。
+
+| ファイル | 操作 |
+| --- | --- |
+| docs/connection.js | **追加・接続URL設定** |
+| docs/rpc.js | **追加**。非表示iframe経由の通信 |
+| docs/exhibitor/index.html | **追加**。出店者画面 |
+| docs/admin/index.html | **追加**。運営画面 |
+| docs/index.html | **置換**。共通通信の読込とHP内リンク |
+| docs/app.js | **置換**。ライブカタログ・画像取得・HP内拡大 |
+| docs/catalog-schema.mjs | **置換**。ライブ／保存版を別条件で検証 |
+| docs/styles.css | **置換**。画像拡大表示 |
+| docs/data/catalog.json | 未接続時のサンプルとして維持 |
+
+ローカル確認後、変更をコミット・pushし、Pages配信完了を確認する。この初回配信は必要。
+以降、出店者のデータ保存・運営設定の変更にpushは不要。プログラム自体の修正には引き続きGAS・Pages両側の更新が必要。
+
+### 5. HPから動作確認
+
+1. `https://kleaex.github.io/hf_test/admin/` で運営としてログインし、公開対象と編集期限を確認して設定を保存する。
+   旧設定の公開対象を引き継ぐ。未選択の出店者を自動的に全公開しない。
+2. `/hf_test/exhibitor/` で本人としてログインする。旧GAS画面のログインはHPへ自動移行しないため、初回は再ログインする。
+3. 作品と文章を入力し、画像を選択→見え方を確認→仮保存する。新規作品も同じ流れで扱える。
+   この段階ではカタログへ出ない。仮保存した画像も、最後の「保存して公開」を押す。
+4. `/hf_test/` を再読み込みし、保存内容と画像が反映されたことを確認する。承認・ZIP取得は不要。
+5. 画像を押し、HP内で拡大→閉じる。GAS・Driveのページへ移動しないことを確認する。
+6. 編集画面再読み込みでログイン復元、別出店者からの更新拒否、編集期限後の変更拒否も確認する。
+7. 運営画面で非公開にして保存し、次回の公開取得で対象・画像を取得できなくなることを確認する。
+   既に閲覧者へ渡った画像・開いている画面の表示は遡って回収できない。
+
+接続失敗時は、HF_FRONTEND_ORIGINSの値、接続URL、最新バージョンの配置、Webアプリのアクセス設定を確認する。
+接続準備は30秒、各要求は60秒で結果未確認として案内する。保存が未確認なら同じ要求で再試行する。
+Googleの実iframe／ブラウザーの制限で接続できない場合、`no-cors`で成功扱いにせず、この移行の実環境確認は未完了とする。
+
+既存画像にはサムネイルがないため、次の差し替えまでは元画像を遅延取得する。新たに追加した画像から小画像を利用する。
+仮保存は24時間有効・出店者ごと10点まで。最終保存時に1作品3点を検証する。
+仮保存期限切れや削除済みのDriveファイルを一括削除する機能は未実装。非公開のまま残り、公開APIからは取得できない。
+旧ZIPを公開した履歴がある場合、その静的画像・Git履歴は今回の非公開化では消えない。必要な撤回は別途扱う。
+
+仕様上の根拠: [GASのiframe許可設定](https://developers.google.com/apps-script/reference/html/x-frame-options-mode)、
+[postMessageのorigin/source照合](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage)。
+
 ## 静的カタログ
 READMEのローカル起動で確認し、Pagesを有効にする場合は main /docs を配信する。
 公開ファイルは docs/ に限定する。設計資料は design/ に置く。
@@ -9,8 +110,8 @@ READMEのローカル起動で確認し、Pagesを有効にする場合は main 
 1. 運営のGoogleアカウントで空のSpreadsheetを新規作成し、「即売会・実験用」などの名前を付ける。
    リンク共有は「制限付き」のままとし、出店者へ共有しない。本番ファイルを指定しない。
 2. 新しい独立したApps Scriptプロジェクトを作る。
-3. gas/ の全.gsファイル（Code、Store、Auth、Profile、Admin、Images、Publishing、AdminConsole）を同名のスクリプトファイルに貼る。
-   Index.htmlはHTMLファイルIndex、AdminIndex.htmlはHTMLファイルAdminIndexに貼る。古い疎通確認用コードは置き換える。
+3. gas/ の全.gsファイル（Code、Store、Auth、Profile、Admin、Images、Publishing、AdminConsole、Transport、PublicCatalog）を同名のスクリプトファイルに貼る。
+   Bridge.htmlはHTMLファイルBridge、Index.htmlはHTMLファイルIndex、AdminIndex.htmlはHTMLファイルAdminIndexに貼る。古い疎通確認用コードは置き換える。
    tests/ のファイルは配置しない。
 4. プロジェクト設定でマニフェストを表示し、gas/appsscript.json の内容を設定する。
    Sheets・メール送信・Driveの権限を使う。Driveは画像保存先をIDで指定するためdriveスコープを使用する。

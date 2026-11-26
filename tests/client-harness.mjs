@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 
 // 実際のIndex.html内スクリプトを動かす最小DOM。描画やブラウザーのStorage挙動は検証しない。
 export function clientHarness(backend, storage = new Map(), options = {}) {
+  const isAdmin = options.hpRole ? options.hpRole === 'admin' : !!options.htmlFile;
   class Element {
     constructor() { this.children = []; this.dataset = {}; this.events = {}; this.hidden = false; this.value = ''; this.textContent = ''; this.disabled = false; }
     addEventListener(name, handler) { this.events[name] = handler; }
@@ -20,16 +21,17 @@ export function clientHarness(backend, storage = new Map(), options = {}) {
       return all.filter(node => tags.includes(node.tagName));
     }
     reportValidity() { return true; }
-    reset() { for (const id of options.htmlFile ? ['title', 'eventDate', 'venue', 'deadline'] : ['name', 'description', 'genre']) elements[id].value = ''; }
+    reset() { for (const id of isAdmin ? ['title', 'eventDate', 'venue', 'deadline'] : ['name', 'description', 'genre']) elements[id].value = ''; }
   }
-  const html = fs.readFileSync(new URL('../gas/' + (options.htmlFile || 'Index.html'), import.meta.url), 'utf8');
+  const html = fs.readFileSync(new URL(options.hpRole ? '../docs/' + options.hpRole + '/index.html' : '../gas/' + (options.htmlFile || 'Index.html'), import.meta.url), 'utf8');
   const elements = {};
   for (const match of html.matchAll(/<([a-z]+)\b[^>]*\bid="([^"]+)"/g)) {
     elements[match[2]] = new Element(); elements[match[2]].tagName = match[1];
   }
-  if (options.htmlFile) elements.fields.append(elements.title, elements.eventDate, elements.venue, elements.deadline, elements.exhibitors);
+  if (isAdmin) elements.fields.append(elements.title, elements.eventDate, elements.venue, elements.deadline, elements.exhibitors);
   else elements.fields.append(elements.name, elements.description, elements.genre, elements.books, elements.addBook);
-  for (const id of options.htmlFile ? ['dashboard', 'storageNotice', 'restore', 'previewPanel'] : ['editor', 'sessionNotice', 'restore', 'imageConfirm']) elements[id].hidden = true;
+  for (const id of isAdmin ? ['dashboard', 'storageNotice', 'restore'] : ['editor', 'sessionNotice', 'restore', 'imageConfirm']) elements[id].hidden = true;
+  if (elements.previewPanel) elements.previewPanel.hidden = true;
   const calls = [];
   const google = { script: { get run() {
     let success, failure;
@@ -43,6 +45,10 @@ export function clientHarness(backend, storage = new Map(), options = {}) {
     } }); return runner;
   } } };
   const window = { google, addEventListener() {} };
+  window.hfRpc = async (name, ...args) => {
+    calls.push({ name, args }); const result = await backend(name, ...args);
+    if (!result.ok) throw result.error; return result;
+  };
   Object.defineProperty(window, 'sessionStorage', { get() {
     if (options.storageBlocked) throw new Error('SecurityError');
     return { getItem: key => storage.get(key) ?? null,

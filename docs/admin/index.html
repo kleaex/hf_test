@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <script src="../connection.js"></script><script src="../rpc.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>運営画面（実験用）</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f5f7f5;color:#20372d;font-family:sans-serif;line-height:1.7}
+    main{max-width:1100px;margin:2rem auto;padding:0 1rem 3rem}h1{font-size:1.8rem}h2{font-size:1.3rem}h3{font-size:1.1rem}
+    section,.panel{background:white;border:1px solid #c6d2ca;border-radius:6px;padding:1.25rem;margin:1rem 0}
+    label{display:block;font-weight:bold;margin:.8rem 0 .3rem}input,textarea,button{font:inherit}input:not([type=checkbox]){display:block;width:100%;padding:.6rem;border:1px solid #7d9184;border-radius:4px;color:inherit;background:white}
+    input[type=checkbox]{width:1.2rem;height:1.2rem;vertical-align:middle}button,.file-link{padding:.6rem 1rem;border:1px solid #375e49;border-radius:4px;background:white;color:#254e37;cursor:pointer}
+    .primary{background:#254e37;color:white}button:disabled{opacity:.5;cursor:default}.actions{display:flex;flex-wrap:wrap;gap:.6rem;margin:1rem 0}.note{font-size:.9rem;color:#52665a}
+    #result{border-left:4px solid #375e49;padding:.8rem;overflow-wrap:anywhere}#result:empty{display:none}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 1rem}
+    table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{border-bottom:1px solid #d0d9d2;padding:.7rem;text-align:left;vertical-align:top}td:nth-child(2){overflow-wrap:anywhere}.table-wrap{overflow-x:auto}caption{text-align:left;font-weight:bold}
+    fieldset{border:0;margin:0;padding:0;min-width:0}
+    [hidden]{display:none!important}:focus-visible{outline:3px solid #b36b12;outline-offset:3px}@media(max-width:640px){.form-grid{grid-template-columns:1fr}section{padding:1rem}main{margin:1rem auto}th,td{padding:.5rem}}
+  </style>
+</head>
+<body>
+<main>
+  <header><h1>運営画面 <small>実験用</small></h1><p>開催設定・配置・公開対象を管理します。保存した設定はカタログの次回読み込み時に反映されます。</p></header>
+  <p id="result" role="status" aria-live="polite"></p>
+  <p id="storageNotice" class="note" hidden>このブラウザーではログインを一時保存できません。再読み込み後は再ログインしてください。</p>
+  <button id="restore" type="button" hidden>ログインの復元を再試行</button>
+  <section id="login">
+    <h2>運営としてログイン</h2>
+    <p class="note">出店者用の確認コードは使えません。運営として登録した宛先を指定してください。</p>
+    <form id="emailForm"><label for="email">運営のメールアドレス</label><input id="email" type="email" autocomplete="email" maxlength="254" required><div class="actions"><button type="submit">運営用コードを送信・再送</button></div></form>
+    <form id="codeForm"><label for="code">運営用確認コード（6桁）</label><input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required><div class="actions"><button class="primary" type="submit">運営画面へログイン</button></div></form>
+  </section>
+  <div id="dashboard" hidden>
+    <div class="actions"><button id="reload" type="button">保存済み設定を読み直す</button><button id="logout" type="button">ログアウト</button></div>
+    <p id="revision" class="note"></p>
+    <section>
+      <h2>開催設定・配置</h2>
+      <form id="eventForm">
+        <fieldset id="fields">
+          <label for="title">カタログ名（必須）</label><input id="title" maxlength="120" required>
+          <div class="form-grid"><div><label for="eventDate">開催日</label><input id="eventDate" type="date"></div><div><label for="venue">会場</label><input id="venue" maxlength="200"></div></div>
+          <label for="deadline">出店者の編集終了日時（日本時間）</label><input id="deadline" type="datetime-local" step="1">
+          <p class="note">空欄・期限終了後は出店者の編集を停止します。変更は設定保存後に有効です。</p>
+          <div class="table-wrap"><table><caption>出店者と公開対象</caption><thead><tr><th>公開</th><th>出店者</th><th>作品・画像</th><th>ブース番号</th></tr></thead><tbody id="exhibitors"></tbody></table></div>
+          <p class="note">チェックした出店者の保存済みプロフィール・全作品・登録画像を対象にします。ブース番号が空なら「配置未定」です。</p>
+        </fieldset>
+        <div class="actions"><button id="save" class="primary" type="submit">設定を保存</button></div>
+      </form>
+    </section>
+    <p><a href="../">公開カタログを確認</a></p>
+  </div>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const SESSION_KEY = 'hf_test.adminSession.v1';
+let token = null, data = null, dirty = false, busy = false, pendingSave = null;
+function message(text) { $('result').textContent = text; }
+function persist(value) {
+  try { if (value) window.sessionStorage.setItem(SESSION_KEY, value); else window.sessionStorage.removeItem(SESSION_KEY); }
+  catch (_) { $('storageNotice').hidden = false; }
+}
+function controls() {
+  const pending = !!pendingSave;
+  $('fields').disabled = busy || pending;
+  $('save').disabled = busy;
+  $('save').textContent = pendingSave ? '同じ設定保存を再試行・結果確認' : '設定を保存';
+  for (const id of ['reload', 'logout', 'restore']) $(id).disabled = busy;
+  for (const element of document.querySelectorAll('#login input, #login button')) element.disabled = busy;
+}
+async function rpc(name, ...args) {
+  try { return await window.hfRpc(name, ...args); }
+  catch (error) { if (error.code === 'UNAUTHENTICATED') persist(null); throw error; }
+}
+async function action(operation) {
+  if (busy) return; busy = true; controls();
+  try { await operation(); } catch (error) { message(error.message || '処理を完了できませんでした。'); }
+  finally { busy = false; controls(); }
+}
+function element(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
+function render(next) {
+  data = next; dirty = false; pendingSave = null;
+  $('title').value = data.title; $('eventDate').value = data.eventDate; $('venue').value = data.venue;
+  $('deadline').value = data.editDeadline && Number.isFinite(Date.parse(data.editDeadline)) ? new Date(Date.parse(data.editDeadline) + 9 * 3600000).toISOString().slice(0, 19) : '';
+  $('revision').textContent = '開催回 ' + data.eventId + ' ／ 設定更新番号 ' + data.revision;
+  $('exhibitors').replaceChildren();
+  data.exhibitors.forEach(exhibitor => {
+    const row = element('tr'); row.dataset.id = exhibitor.exhibitorId;
+    const selectCell = element('td'); const select = element('input'); select.type = 'checkbox'; select.checked = exhibitor.publish; select.dataset.key = 'publish'; select.setAttribute('aria-label', exhibitor.name + 'を公開対象にする'); selectCell.append(select);
+    const name = element('td'); name.append(element('strong', exhibitor.name), element('div', exhibitor.exhibitorId, 'note'));
+    const boothCell = element('td'); const booth = element('input'); booth.value = exhibitor.booth; booth.maxLength = 40; booth.dataset.key = 'booth'; booth.setAttribute('aria-label', exhibitor.name + 'のブース番号'); boothCell.append(booth);
+    row.append(selectCell, name, element('td', exhibitor.publicationCount + '作品 ／ ' + exhibitor.imageCount + '点'), boothCell); $('exhibitors').append(row);
+  });
+  $('login').hidden = true; $('dashboard').hidden = false; $('restore').hidden = true; controls();
+}
+function saveRequest() {
+  const deadline = $('deadline').value;
+  return { revision: data.revision, requestId: crypto.randomUUID(), title: $('title').value, eventDate: $('eventDate').value,
+    venue: $('venue').value, editDeadline: deadline ? (deadline.length === 16 ? deadline + ':00' : deadline) + '+09:00' : '',
+    exhibitors: Array.from($('exhibitors').children, row => {
+      const values = { exhibitorId: row.dataset.id };
+      for (const input of row.querySelectorAll('[data-key]')) values[input.dataset.key] = input.dataset.key === 'publish' ? input.checked : input.value;
+      return values;
+    }) };
+}
+async function restore() {
+  let saved;
+  try { saved = window.sessionStorage.getItem(SESSION_KEY); } catch (_) { $('storageNotice').hidden = false; return; }
+  if (!saved) return;
+  if (!/^[a-f0-9]{64}$/.test(saved)) { persist(null); return; }
+  $('restore').hidden = true; message('運営ログインを確認しています。');
+  try { const result = await rpc('getAdminDashboard', saved); token = saved; render(result.data); message('運営ログインを復元しました。'); }
+  catch (error) {
+    if (error.code === 'UNAUTHENTICATED') { persist(null); message('運営として再ログインしてください。'); }
+    else { $('restore').hidden = false; message('ログインを確認できませんでした。復元を再試行してください。'); }
+  }
+}
+$('restore').addEventListener('click', () => action(restore));
+$('emailForm').addEventListener('submit', event => { event.preventDefault(); action(async () => { const result = await rpc('requestAdminLoginCode', $('email').value); $('code').value = ''; message(result.message); }); });
+$('codeForm').addEventListener('submit', event => {
+  event.preventDefault(); if (!$('emailForm').reportValidity()) return;
+  action(async () => { const result = await rpc('verifyAdminLoginCode', $('email').value, $('code').value); token = result.token; persist(token); $('code').value = ''; $('email').value = ''; render(result.data); message('運営としてログインしました。有効期限は1時間です。'); });
+});
+function changed() { dirty = true; controls(); }
+$('fields').addEventListener('input', changed); $('fields').addEventListener('change', changed);
+$('eventForm').addEventListener('submit', event => {
+  event.preventDefault(); action(async () => {
+    if (!pendingSave) {
+      const request = saveRequest();
+      if (data.editDeadline && Date.parse(data.editDeadline) <= Date.now() && Date.parse(request.editDeadline) > Date.now()
+          && !confirm('終了済みの出店者編集を再開しますか？')) return;
+      pendingSave = request;
+    }
+    controls();
+    try { const result = await rpc('saveAdminEvent', token, pendingSave); render(result.data); message(result.replayed ? '設定が保存済みであることを確認しました。' : '設定を保存しました。カタログの次回読み込み時に反映されます。'); }
+    catch (error) {
+      if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) message('保存結果が未確認です。同じ設定保存を再試行してください。');
+      else { pendingSave = null; message(error.message); }
+    }
+  });
+});
+$('reload').addEventListener('click', () => {
+  if ((dirty || pendingSave) && !confirm('未保存の入力を破棄して保存済み設定を読み直しますか？')) return;
+  action(async () => { const result = await rpc('getAdminDashboard', token); render(result.data); message('保存済み設定を読み込みました。'); });
+});
+$('logout').addEventListener('click', () => {
+  if ((dirty || pendingSave) && !confirm('未保存の入力を破棄してログアウトしますか？')) return;
+  action(async () => {
+    try { await rpc('logoutAdmin', token); } catch (error) { if (error.code !== 'UNAUTHENTICATED') throw error; }
+    token = null; data = null; dirty = false; pendingSave = null; persist(null); $('eventForm').reset(); $('exhibitors').replaceChildren(); $('dashboard').hidden = true; $('login').hidden = false; message('運営画面からログアウトしました。');
+  });
+});
+window.addEventListener('beforeunload', event => { if (dirty || pendingSave) { event.preventDefault(); event.returnValue = ''; } });
+controls(); action(restore);
+</script>
+</body>
+</html>

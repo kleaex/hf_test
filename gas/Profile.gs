@@ -6,6 +6,9 @@ function view_(record) {
       return Object.assign({}, book, { images: (book.images || []).map(function (image) {
         return { id: image.id, contentType: image.contentType, bytes: image.bytes, width: image.width, height: image.height };
       }) });
+    }), stagedImages: (state.stagedImages || []).filter(function (item) { return item.expiresAt > Date.now(); }).map(function (item) {
+      return { publicationId: item.publicationId, image: { id: item.image.id, contentType: item.image.contentType,
+        bytes: item.image.bytes, width: item.image.width, height: item.image.height } };
     }), updatedAt: state.updatedAt, editable: editing_(config).editable,
     editDeadline: editing_(config).deadline, imagesConfigured: !!config.imageFolderId };
 }
@@ -39,7 +42,12 @@ function saveProfile_(token, request) {
   if (!Array.isArray(request.publications) || request.publications.length > 10) fail_('VALIDATION', '頒布物は10点まで登録できます。');
   const ids = [];
   const publications = request.publications.map(function (book) {
-    keys_(book, ['id', 'title', 'author', 'description', 'price', 'releaseType', 'imageIds']);
+    keys_(book, ['id', 'title', 'author', 'description', 'price', 'releaseType', 'imageIds', 'draftId']);
+    if (book.draftId !== undefined && (book.id !== null || typeof book.draftId !== 'string' || !/^draft_[a-f0-9]{32}$/.test(book.draftId))) fail_('VALIDATION', '新規作品の識別子が正しくありません。');
+    if (book.draftId !== undefined) {
+      if (ids.indexOf(book.draftId) >= 0) fail_('VALIDATION', '新規作品が重複しています。');
+      ids.push(book.draftId);
+    }
     if (book.id !== null && (typeof book.id !== 'string' || !/^pub_[a-f0-9]{32}$/.test(book.id))) fail_('VALIDATION', '頒布物IDが正しくありません。');
     if (book.id !== null && ids.indexOf(book.id) >= 0) fail_('VALIDATION', '同じ頒布物が重複しています。');
     if (book.id !== null) ids.push(book.id);
@@ -52,6 +60,7 @@ function saveProfile_(token, request) {
     const result = { id: book.id, title: text_(book.title, 120, true), author: text_(book.author, 120, false),
       description: text_(book.description, 2000, false), price: book.price, releaseType: book.releaseType };
     if (book.imageIds !== undefined) result.imageIds = book.imageIds;
+    if (book.draftId !== undefined) result.draftId = book.draftId;
     return result;
   });
   const state = json_(context.record.values[2]);
@@ -69,11 +78,15 @@ function saveProfile_(token, request) {
     const existingImages = saved && saved.images || [];
     const imageIds = book.imageIds === undefined ? existingImages.map(function (image) { return image.id; }) : book.imageIds;
     book.images = imageIds.map(function (id) {
-      const image = existingImages.find(function (item) { return item.id === id; });
+      const staged = (state.stagedImages || []).find(function (item) {
+        return item.publicationId === (book.id || book.draftId) && item.image.id === id && item.expiresAt > Date.now();
+      });
+      const image = existingImages.find(function (item) { return item.id === id; }) || (staged && staged.image);
       if (!image) fail_('FORBIDDEN', 'この作品に属さない画像は指定できません。');
       return image;
     });
     delete book.imageIds;
+    delete book.draftId;
     if (book.id === null) book.id = 'pub_' + random_(context.config, 'publication').slice(0, 32);
     else if (!state.publications.some(function (saved) { return saved.id === book.id; })) {
       fail_('FORBIDDEN', 'この出店者に属さない頒布物は保存できません。');
@@ -81,6 +94,10 @@ function saveProfile_(token, request) {
   });
   const revision = state.revision + 1;
   const next = { revision: revision, profile: profile, publications: publications, updatedAt: Date.now(),
+    stagedImages: (state.stagedImages || []).filter(function (item) {
+      return item.expiresAt > Date.now() && publications.some(function (book) { return book.id === item.publicationId; })
+        && !publications.some(function (book) { return book.images.some(function (image) { return image.id === item.image.id; }); });
+    }),
     imageBudget: state.imageBudget || {},
     receipts: state.receipts.concat([{ id: request.requestId, fingerprint: fingerprint,
       revision: revision, userId: context.user.values[0], savedAt: Date.now() }]).slice(-20) };
