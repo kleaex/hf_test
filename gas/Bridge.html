@@ -21,5 +21,7 @@ window.addEventListener('message', event => {
   google.script.run.withSuccessHandler(reply).withFailureHandler(() => reply({ ok: false,
     error: { code: 'UNAVAILABLE', message: '処理結果を確認できませんでした。同じ操作を再試行してください。' } }))[message.method](...message.args);
 });
-window.top.postMessage({ channel: 'hf-rpc-v1', nonce: settings.nonce, ready: true }, settings.origin);
+const ready = { channel: 'hf-rpc-v1', nonce: settings.nonce, ready: true };
+if (Object.prototype.hasOwnProperty.call(settings, 'initialCatalog')) ready.initialCatalog = settings.initialCatalog;
+window.top.postMessage(ready, settings.origin);
 </script></body></html>

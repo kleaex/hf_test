@@ -30,7 +30,7 @@ function client(options = {}) {
   const message = (data, origin = 'https://n-test-0lu-script.googleusercontent.com', sender = peer) => {
     for (const handler of handlers) handler({ data, origin, source: sender });
   };
-  const ready = () => { const nonce = new URL(frames.at(-1).src).searchParams.get('nonce'); message({ channel: 'hf-rpc-v1', nonce, ready: true }); return nonce; };
+  const ready = (extra = {}) => { const nonce = new URL(frames.at(-1).src).searchParams.get('nonce'); message({ channel: 'hf-rpc-v1', nonce, ready: true, ...extra }); return nonce; };
   const tick = ms => { for (const [id, timer] of [...timers]) if (timer.ms === ms) { timers.delete(id); timer.callback(); } };
   return { window, frames, handlers, timers, sent, message, ready, tick, peer, root, images, revoked };
 }
@@ -142,4 +142,41 @@ test('画像診断は許可した容量・時間・取得元だけを記録す�
     encodes: 1, source: 'gas', variant: 'thumbnail', fileName: 'PRIVATE_FILE', id: 'img_private', token: 'PRIVATE_TOKEN' });
   const result = c.window.hfPerformance.snapshot()[0]; assert.equal(result.details.bytes, 200); assert.equal(result.details.source, 'gas');
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|img_|fileName|token/);
+});
+
+test('初回カタログを接続通知から受け取り、追加のRPCを送らない', async () => {
+  const c = client(); const request = c.window.hfLoadCatalog();
+  assert.equal(new URL(c.frames[0].src).searchParams.get('initial'), 'catalog');
+  const initialCatalog = { ok: true, data: { title: '初期の公開情報' }, performance: { totalMs: 20, stages: { catalogCache: { ms: 1, count: 1 } } } };
+  c.ready({ initialCatalog }); assert.equal((await request).data.title, '初期の公開情報'); assert.equal(c.sent.length, 0);
+  assert.deepEqual(Array.from(c.window.hfPerformance.snapshot(), item => item.operation), ['bridge', 'catalogInitial']);
+  assert.equal(c.window.hfPerformance.snapshot()[1].serverMs, 20);
+  // 2度目は同じ初期データを再利用せず、保存後の現在の情報を読み直す。
+  const next = c.window.hfLoadCatalog(); await settle(); assert.equal(c.sent[0][0].method, 'getPublicCatalog');
+  const message = c.sent[0][0]; c.message({ channel: 'hf-rpc-v1', nonce: message.nonce, id: message.id, result: { ok: true, data: { title: '次の保存後' } } });
+  assert.equal((await next).data.title, '次の保存後');
+});
+
+test('偽の接続通知の初期データを受け取らず、初期応答のエラーも成功扱いにしない', async () => {
+  const c = client(); const request = c.window.hfLoadCatalog();
+  const nonce = new URL(c.frames[0].src).searchParams.get('nonce');
+  c.message({ channel: 'hf-rpc-v1', nonce, ready: true, initialCatalog: { ok: true, data: { title: 'fake' } } }, 'https://evil.invalid');
+  await settle(); assert.equal(c.window.hfPerformance.snapshot().length, 0);
+  c.ready({ initialCatalog: { ok: false, error: { code: 'NOT_CONFIGURED', message: '設定を確認してください。' } } });
+  await assert.rejects(request, error => error.code === 'NOT_CONFIGURED'); assert.equal(c.sent.length, 0);
+});
+
+test('旧GASの接続通知に初期データがなければ、通常の公開APIで取得する', async () => {
+  const c = client(); const request = c.window.hfLoadCatalog(); c.ready(); await settle();
+  assert.equal(c.sent.length, 1); const message = c.sent[0][0]; assert.equal(message.method, 'getPublicCatalog');
+  c.message({ channel: 'hf-rpc-v1', nonce: message.nonce, id: message.id, result: { ok: true, data: { title: '従来経路' } } });
+  assert.equal((await request).data.title, '従来経路'); assert.equal(c.window.hfPerformance.snapshot().at(-1).operation, 'catalogFallback');
+});
+
+test('先に別のAPIで接続しても、初期データを待ち続けず公開APIで取得する', async () => {
+  const c = client(); const first = c.window.hfRpc('getSystemStatus'); c.ready(); await settle();
+  let message = c.sent[0][0]; c.message({ channel: 'hf-rpc-v1', nonce: message.nonce, id: message.id, result: { ok: true } }); await first;
+  const request = c.window.hfLoadCatalog(); await settle(); message = c.sent[1][0];
+  c.message({ channel: 'hf-rpc-v1', nonce: message.nonce, id: message.id, result: { ok: true, data: { title: '現在の情報' } } });
+  assert.equal((await request).data.title, '現在の情報'); assert.equal(c.frames.length, 1);
 });

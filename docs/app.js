@@ -209,15 +209,29 @@ function render() {
 }
 
 async function load() {
+  const loadStarted = Date.now();
   try {
-    let raw;
-    if (window.HF_CONNECTION?.gasUrl) raw = (await window.hfRpc('getPublicCatalog')).data;
+    let raw, initialImages = [];
+    if (window.HF_CONNECTION?.gasUrl) {
+      const result = await (window.hfLoadCatalog ? window.hfLoadCatalog() : window.hfRpc('getPublicCatalog'));
+      raw = result.data;
+      if (Array.isArray(result.initialImages)) initialImages = result.initialImages.slice(0, 1);
+    }
     else {
       const response = await fetch('./data/catalog.json', { cache: 'no-store' });
       if (!response.ok) throw new Error('Catalog unavailable');
       raw = await response.json();
     }
     const data = validateCatalog(raw, { allowLive: true });
+    const publicIds = new Set(data.exhibitors.flatMap(exhibitor => exhibitor.publications.flatMap(book => (book.images || []).map(image => image.id))));
+    for (const image of initialImages) {
+      if (!image || !publicIds.has(image.id) || typeof image.base64 !== 'string' || image.base64.length > 40000) continue;
+      const key = image.id + ':thumbnail';
+      try {
+        const url = decodedImage(image, { id: image.id, variant: 'thumbnail', details: {} });
+        imageCache.set(key, Promise.resolve(url)); readyImages.add(key);
+      } catch (_) { /* 同梱画像の問題で本文の表示を止めない。通常の画像要求で再試行する。 */ }
+    }
     const publicationInfo = document.getElementById('publicationInfo');
     publicationInfo.textContent = data.sample ? 'サンプルカタログを表示しています。'
       : data.live ? '保存済みの公開情報 ／ 取得日時 ' + new Date(data.generatedAt).toLocaleString('ja-JP')
@@ -237,6 +251,10 @@ async function load() {
     search.addEventListener('input', render);
     genre.addEventListener('change', render);
     const started = Date.now(); render(); window.hfPerformance?.record('catalogPaint', Date.now() - started);
+    window.hfPerformance?.record('catalogLoad', Date.now() - loadStarted);
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      window.hfPerformance?.record('catalogTextReady', performance.now());
+    }
   } catch (error) {
     catalog.replaceChildren();
     status.textContent = 'カタログを読み込めませんでした。時間をおいて再読み込みしてください。';

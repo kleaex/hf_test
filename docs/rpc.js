@@ -2,11 +2,11 @@
 // GASの二重iframeにも対応し、作成したiframeの子孫以外からの応答を受け付けない。
 (() => {
   const measurements = [];
-  const labels = new Set(['bridge', 'imagePrepare', 'imageUpload', 'imageProbe', 'imageLoad', 'imageQueue', 'imageUnpack', 'imageReady', 'imageCache', 'catalogPaint', 'getPublicCatalog', 'getPublicImage', 'getPublicImages',
+  const labels = new Set(['bridge', 'catalogInitial', 'catalogFallback', 'catalogLoad', 'catalogTextReady', 'imagePrepare', 'imageUpload', 'imageProbe', 'imageLoad', 'imageQueue', 'imageUnpack', 'imageReady', 'imageCache', 'catalogPaint', 'getPublicCatalog', 'getPublicImage', 'getPublicImages',
     'getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'stagePublicationImage', 'getPublicationImage', 'logout',
     'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'getAdminImage', 'logoutAdmin']);
   const stages = new Set(['lockWait', 'lockHeld', 'sheetHeader', 'sheetRead', 'sheetWrite', 'catalogBuild', 'catalogCache',
-    'imageValidate', 'thumbnailValidate', 'driveSave', 'driveRead', 'driveMetadata', 'driveMetadataApi', 'driveMetadataLegacy', 'imageIndexSeed', 'imageAuthorize', 'imageCommit', 'sharedImageCache', 'cacheWrite']);
+    'imageValidate', 'thumbnailValidate', 'driveSave', 'driveRead', 'driveMetadata', 'driveMetadataApi', 'driveMetadataLegacy', 'imageIndexSeed', 'catalogPreview', 'imageAuthorize', 'imageCommit', 'sharedImageCache', 'cacheWrite']);
   const cacheStatuses = new Set(['jsonMiss', 'jsonHit', 'jsonInvalid', 'jsonPartial', 'jsonReadError', 'jsonStored',
     'jsonOversize', 'jsonWriteError', 'jsonWriteVerified', 'jsonWriteMissing', 'jsonReadbackError']);
   window.hfPerformance = Object.freeze({
@@ -86,16 +86,17 @@
     return false;
   };
   const network = () => ({ network: true, message: 'GASとの接続結果を確認できませんでした。接続設定を確認し、再試行してください。' });
-  let frame, nonce, peer, peerOrigin, ready;
+  let frame, nonce, peer, peerOrigin, ready, initialCatalog;
   const pending = new Map();
   const googleOrigin = value => /^https:\/\/(?:script\.google\.com|(?:[a-z0-9-]+[.-])?script\.googleusercontent\.com)$/.test(value);
-  function connect() {
+  function connect(withCatalog = false) {
     if (ready) return ready;
     const url = new URL(window.HF_CONNECTION?.gasUrl || '', location.href);
     if (url.origin !== 'https://script.google.com' || !/^\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url.pathname)) throw network();
     nonce = random(32); peer = null; peerOrigin = null;
     const connectionNonce = nonce;
     url.search = new URLSearchParams({ view: 'bridge', origin: location.origin, nonce });
+    if (withCatalog) url.searchParams.set('initial', 'catalog');
     frame = document.createElement('iframe'); frame.hidden = true; frame.title = 'データ接続'; frame.referrerPolicy = 'no-referrer';
     const connectionFrame = frame;
     const started = Date.now();
@@ -109,6 +110,7 @@
             || !googleOrigin(event.origin) || !belongs(connectionFrame.contentWindow, event.source)) return;
         if (!peer && message.ready === true) {
           peer = event.source; peerOrigin = event.origin; clearTimeout(timeout);
+          if (withCatalog && Object.prototype.hasOwnProperty.call(message, 'initialCatalog')) initialCatalog = message.initialCatalog;
           window.hfPerformance.record('bridge', Date.now() - started); resolve(); return;
         }
         if (event.source !== peer || event.origin !== peerOrigin || message.ready) return;
@@ -122,6 +124,21 @@
     });
     return ready;
   }
+  window.hfLoadCatalog = async () => {
+    const started = Date.now();
+    await connect(true);
+    if (initialCatalog !== undefined) {
+      const result = initialCatalog; initialCatalog = undefined; // 1回だけ利用。以降は現在の情報を取得する。
+      window.hfPerformance.record('catalogInitial', Date.now() - started, result && result.performance);
+      if (!result || typeof result.ok !== 'boolean') throw network();
+      if (!result.ok) throw result.error || network();
+      return result;
+    }
+    // 旧GASとの段階更新・別画面から既に接続済みの場合も従来APIで動く。
+    const result = await window.hfRpc('getPublicCatalog');
+    window.hfPerformance.record('catalogFallback', Date.now() - started, result.performance);
+    return result;
+  };
   window.hfRpc = async (method, ...args) => {
     await connect();
     const started = Date.now();
