@@ -46,7 +46,7 @@
       <input id="loginName" maxlength="80" required>
       <label for="email">メールアドレス</label>
       <input id="email" type="email" autocomplete="email" maxlength="254" required>
-      <p class="note">新規登録には、ご自身が受信できるメールアドレスを使えます。届いた確認コードを入力すると登録が完了します。1メールアドレスにつき1出店者です。登録直後は非公開で、運営が公開対象に選ぶとカタログに掲載されます。</p>
+      <p class="note">新規登録には、ご自身が受信できるメールアドレスを使えます。届いた確認コードを入力すると登録が完了します。1メールアドレスにつき1出店者です。自動公開モードでは確認後に掲載され、運営承認モードでは承認まで非公開です。</p>
       <div class="actions"><button id="sendCode" type="submit">確認コードを送信・再送</button></div>
     </form>
     <form id="codeForm">
@@ -60,6 +60,7 @@
     <h2>出店情報</h2>
     <p id="savedState" class="note"></p>
     <p id="editState" class="note"></p>
+    <p id="publicationState" class="note"></p>
     <form id="profileForm">
       <fieldset id="fields">
         <label for="name">出店名（必須・80文字まで）</label><input id="name" maxlength="80" required>
@@ -279,6 +280,9 @@ function addBook(book) {
 function render(next) {
   if (previewObserver) previewObserver.disconnect();
   data = next; pending = null; dirty = false; clearPreparedImage();
+  $('publicationState').textContent = data.publicationMode === 'automatic'
+    ? '自動公開モード：保存済みの出店情報をカタログに掲載します。'
+    : '運営承認モード：運営が承認した出店だけを掲載します。承認後の編集に再承認は不要です。';
   $('name').value = data.profile.name; $('description').value = data.profile.description; $('genre').value = data.profile.genre;
   $('books').replaceChildren(); data.publications.forEach(addBook);
   $('savedState').textContent = '更新番号 ' + data.revision + (data.updatedAt ? ' ／ 保存日時 ' + new Date(data.updatedAt).toLocaleString('ja-JP') : ' ／ まだ保存されていません');
@@ -322,7 +326,9 @@ $('codeForm').addEventListener('submit', event => {
     }
     token = result.token; rememberSession(token); $('restore').hidden = true;
     $('code').value = ''; $('email').value = ''; $('loginName').value = ''; $('authMode').value = 'login';
-    render(result.data); message(registering ? '出店者登録が完了しました。現在は非公開です。出店情報を入力して保存してください。' : 'ログインしました。有効期限は2時間です。');
+    render(result.data); message(registering
+      ? (result.data.publicationMode === 'automatic' ? '出店者登録が完了しました。自動公開の対象です。出店情報を入力して保存してください。' : '出店者登録が完了しました。承認までは非公開です。出店情報を入力して保存してください。')
+      : 'ログインしました。有効期限は2時間です。');
   });
 });
 $('fields').addEventListener('input', event => { if (!event.target || event.target.type !== 'file') dirty = true; });

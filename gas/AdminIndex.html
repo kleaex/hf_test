@@ -8,7 +8,7 @@
     *{box-sizing:border-box}body{margin:0;background:#f5f7f5;color:#20372d;font-family:sans-serif;line-height:1.7}
     main{max-width:1100px;margin:2rem auto;padding:0 1rem 3rem}h1{font-size:1.8rem}h2{font-size:1.3rem}h3{font-size:1.1rem}
     section,.panel{background:white;border:1px solid #c6d2ca;border-radius:6px;padding:1.25rem;margin:1rem 0}
-    label{display:block;font-weight:bold;margin:.8rem 0 .3rem}input,textarea,button{font:inherit}input:not([type=checkbox]){display:block;width:100%;padding:.6rem;border:1px solid #7d9184;border-radius:4px;color:inherit;background:white}
+    label{display:block;font-weight:bold;margin:.8rem 0 .3rem}input,textarea,select,button{font:inherit}select,input:not([type=checkbox]){display:block;width:100%;padding:.6rem;border:1px solid #7d9184;border-radius:4px;color:inherit;background:white}
     input[type=checkbox]{width:1.2rem;height:1.2rem;vertical-align:middle}button,.file-link{padding:.6rem 1rem;border:1px solid #375e49;border-radius:4px;background:white;color:#254e37;cursor:pointer}
     .primary{background:#254e37;color:white}button:disabled{opacity:.5;cursor:default}.actions{display:flex;flex-wrap:wrap;gap:.6rem;margin:1rem 0}.note{font-size:.9rem;color:#52665a}
     #result{border-left:4px solid #375e49;padding:.8rem;overflow-wrap:anywhere}#result:empty{display:none}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 1rem}
@@ -41,8 +41,8 @@
           <div class="form-grid"><div><label for="eventDate">開催日</label><input id="eventDate" type="date"></div><div><label for="venue">会場</label><input id="venue" maxlength="200"></div></div>
           <label for="deadline">出店者の編集終了日時（日本時間）</label><input id="deadline" type="datetime-local" step="1">
           <p class="note">空欄・期限終了後は出店者の編集を停止します。変更は設定保存後に有効です。</p>
-          <div class="table-wrap"><table><caption>出店者と公開対象</caption><thead><tr><th>公開</th><th>出店者</th><th>作品・画像</th><th>ブース番号</th></tr></thead><tbody id="exhibitors"></tbody></table></div>
-          <p class="note">チェックした出店者の保存済みプロフィール・全作品・登録画像を対象にします。ブース番号が空なら「配置未定」です。</p>
+          <label for="publicationMode">出店の公開モード</label><select id="publicationMode"><option value="approval">運営承認モード</option><option value="automatic">自動公開モード</option></select><p id="publicationModeNote" class="note"></p><p class="note">自動公開への変更で、既存の承認待ち出店も掲載されます。運営承認に戻すと、承認チェックのある出店だけが掲載されます。変更は「設定を保存」で確定します。</p><div class="table-wrap"><table><caption>出店者と承認・配置</caption><thead><tr><th>運営承認</th><th>出店者</th><th>作品・画像</th><th>ブース番号</th></tr></thead><tbody id="exhibitors"></tbody></table></div>
+          <p class="note">承認は出店単位です。承認後のプロフィール・作品・画像の編集に再承認は不要です。ブース番号が空なら「配置未定」です。</p>
         </fieldset>
         <div class="actions"><button id="save" class="primary" type="submit">設定を保存</button></div>
       </form>
@@ -71,7 +71,15 @@ function persist(value) {
   try { if (value) window.sessionStorage.setItem(SESSION_KEY, value); else window.sessionStorage.removeItem(SESSION_KEY); }
   catch (_) { $('storageNotice').hidden = false; }
 }
+function publicationControls() {
+  const automatic = $('publicationMode').value === 'automatic';
+  $('publicationModeNote').textContent = automatic ? '自動公開：メール確認が完了した出店を自動で掲載します。承認チェックは使用しません。' : '運営承認：下の承認チェックを入れ、設定を保存した出店だけを掲載します。';
+  for (const input of $('exhibitors').querySelectorAll('[data-key]')) {
+    if (input.dataset.key === 'publish') input.disabled = automatic || busy || !!pendingSave;
+  }
+}
 function controls() {
+  publicationControls();
   const pending = !!pendingSave || !!pendingExport;
   $('fields').disabled = busy || pending;
   $('save').disabled = busy || !!pendingExport;
@@ -113,13 +121,14 @@ function renderHistory(releases) {
 }
 function render(next) {
   data = next; dirty = false; pendingSave = null; pendingExport = null; clearPreview();
+  $('publicationMode').value = data.publicationMode || 'approval';
   $('title').value = data.title; $('eventDate').value = data.eventDate; $('venue').value = data.venue;
   $('deadline').value = data.editDeadline && Number.isFinite(Date.parse(data.editDeadline)) ? new Date(Date.parse(data.editDeadline) + 9 * 3600000).toISOString().slice(0, 19) : '';
   $('revision').textContent = '開催回 ' + data.eventId + ' ／ 設定更新番号 ' + data.revision;
   $('exhibitors').replaceChildren();
   data.exhibitors.forEach(exhibitor => {
     const row = element('tr'); row.dataset.id = exhibitor.exhibitorId;
-    const selectCell = element('td'); const select = element('input'); select.type = 'checkbox'; select.checked = exhibitor.publish; select.dataset.key = 'publish'; select.setAttribute('aria-label', exhibitor.name + 'を公開対象にする'); selectCell.append(select);
+    const selectCell = element('td'); const select = element('input'); select.type = 'checkbox'; select.checked = exhibitor.publish; select.dataset.key = 'publish'; select.setAttribute('aria-label', exhibitor.name + 'の出店を承認する'); selectCell.append(select);
     const name = element('td'); name.append(element('strong', exhibitor.name), element('div', exhibitor.exhibitorId, 'note'));
     const boothCell = element('td'); const booth = element('input'); booth.value = exhibitor.booth; booth.maxLength = 40; booth.dataset.key = 'booth'; booth.setAttribute('aria-label', exhibitor.name + 'のブース番号'); boothCell.append(booth);
     row.append(selectCell, name, element('td', exhibitor.publicationCount + '作品 ／ ' + exhibitor.imageCount + '点'), boothCell); $('exhibitors').append(row);
@@ -129,7 +138,7 @@ function render(next) {
 function saveRequest() {
   const deadline = $('deadline').value;
   return { revision: data.revision, requestId: crypto.randomUUID(), title: $('title').value, eventDate: $('eventDate').value,
-    venue: $('venue').value, editDeadline: deadline ? (deadline.length === 16 ? deadline + ':00' : deadline) + '+09:00' : '',
+    venue: $('venue').value, publicationMode: $('publicationMode').value, editDeadline: deadline ? (deadline.length === 16 ? deadline + ':00' : deadline) + '+09:00' : '',
     exhibitors: Array.from($('exhibitors').children, row => {
       const values = { exhibitorId: row.dataset.id };
       for (const input of row.querySelectorAll('[data-key]')) values[input.dataset.key] = input.dataset.key === 'publish' ? input.checked : input.value;
@@ -155,6 +164,7 @@ $('codeForm').addEventListener('submit', event => {
   action(async () => { const result = await rpc('verifyAdminLoginCode', $('email').value, $('code').value); token = result.token; persist(token); $('code').value = ''; $('email').value = ''; render(result.data); message('運営としてログインしました。有効期限は1時間です。'); });
 });
 function changed() { dirty = true; clearPreview(); controls(); }
+$('publicationMode').addEventListener('change', changed);
 $('fields').addEventListener('input', changed); $('fields').addEventListener('change', changed);
 $('eventForm').addEventListener('submit', event => {
   event.preventDefault(); action(async () => {

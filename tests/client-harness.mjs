@@ -28,7 +28,7 @@ export function clientHarness(backend, storage = new Map(), options = {}) {
   for (const match of html.matchAll(/<([a-z]+)\b[^>]*\bid="([^"]+)"/g)) {
     elements[match[2]] = new Element(); elements[match[2]].tagName = match[1];
   }
-  if (isAdmin) elements.fields.append(elements.title, elements.eventDate, elements.venue, elements.deadline, elements.exhibitors);
+  if (isAdmin) elements.fields.append(elements.title, elements.eventDate, elements.venue, elements.deadline, elements.publicationMode, elements.exhibitors);
   else elements.fields.append(elements.name, elements.description, elements.genre, elements.books, elements.addBook);
   for (const id of isAdmin ? ['dashboard', 'storageNotice', 'restore'] : ['editor', 'sessionNotice', 'restore', 'imageConfirm']) elements[id].hidden = true;
   if (elements.previewPanel) elements.previewPanel.hidden = true;

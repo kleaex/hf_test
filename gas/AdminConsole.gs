@@ -68,7 +68,7 @@ function setupAdminConsole_() {
       const current = rows_(database_(config).Exhibitors).filter(function (record) { return record.values[1] === config.eventId; });
       const selections = Array.isArray(legacy.exhibitors) ? legacy.exhibitors : [];
       const state = { revision: 0, title: typeof legacy.title === 'string' ? text_(legacy.title, 120, true) : '文芸の小さな市（実験）',
-        eventDate: '', venue: '', editDeadline: config.editDeadline,
+        eventDate: '', venue: '', editDeadline: config.editDeadline, publicationMode: 'approval',
         exhibitors: current.map(function (record) {
           const chosen = selections.find(function (item) { return item.exhibitorId === record.values[0]; });
           return { exhibitorId: record.values[0], booth: chosen ? text_(chosen.booth, 40, false) : '', publish: !!chosen };
@@ -132,7 +132,7 @@ function adminDashboard_(context) {
   const state = eventRecord_(context.config, true).state;
   const exhibitors = rows_(context.db.Exhibitors).filter(function (record) { return record.values[1] === context.config.eventId; });
   return { eventId: context.config.eventId, revision: state.revision, title: state.title, eventDate: state.eventDate,
-    venue: state.venue, editDeadline: state.editDeadline, updatedAt: state.updatedAt,
+    venue: state.venue, editDeadline: state.editDeadline, publicationMode: publicationMode_(state), updatedAt: state.updatedAt,
     exhibitors: exhibitors.map(function (record) {
       const profile = json_(record.values[2]); const selection = state.exhibitors.find(function (item) { return item.exhibitorId === record.values[0]; });
       return { exhibitorId: record.values[0], name: profile.profile.name, publicationCount: profile.publications.length,
@@ -149,7 +149,7 @@ function saveEventRecord_(config, record) {
 
 function saveAdminEvent_(token, request) {
   const context = authenticateAdmin_(token);
-  keys_(request, ['revision', 'requestId', 'title', 'eventDate', 'venue', 'editDeadline', 'exhibitors']);
+  keys_(request, ['revision', 'requestId', 'title', 'eventDate', 'venue', 'editDeadline', 'publicationMode', 'exhibitors']);
   if (!Number.isSafeInteger(request.revision) || request.revision < 0 || typeof request.requestId !== 'string'
       || !/^[A-Za-z0-9_-]{16,80}$/.test(request.requestId)) fail_('VALIDATION', '設定の保存要求が不正です。');
   const next = { title: text_(request.title, 120, true), eventDate: text_(request.eventDate, 10, false),
@@ -157,7 +157,11 @@ function saveAdminEvent_(token, request) {
   if (next.eventDate && (!/^\d{4}-\d{2}-\d{2}$/.test(next.eventDate) || !Number.isFinite(Date.parse(next.eventDate))
       || new Date(next.eventDate + 'T00:00:00Z').toISOString().slice(0, 10) !== next.eventDate)) fail_('VALIDATION', '開催日を確認してください。');
   if (next.editDeadline && !editing_({ editDeadline: next.editDeadline }).deadline) fail_('VALIDATION', '編集期限はタイムゾーン付きの日時で指定してください。');
-  if (!Array.isArray(request.exhibitors) || request.exhibitors.length > 10) fail_('VALIDATION', '出店者は10組までです。');
+  // 旧画面からの保存では現在のモードを維持する。
+  next.publicationMode = request.publicationMode === undefined
+    ? publicationMode_(eventRecord_(context.config, true).state) : request.publicationMode;
+  if (['approval', 'automatic'].indexOf(next.publicationMode) < 0) fail_('VALIDATION', '公開モードを選択してください。');
+  if (!Array.isArray(request.exhibitors)) fail_('VALIDATION', '出店者一覧が不正です。');
   const ids = [], booths = [];
   next.exhibitors = request.exhibitors.map(function (selection) {
     keys_(selection, ['exhibitorId', 'booth', 'publish']);
@@ -184,10 +188,40 @@ function saveAdminEvent_(token, request) {
   return { data: adminDashboard_(context), replayed: false };
 }
 
+function publicationMode_(state) {
+  if (state.publicationMode === undefined) return 'approval';
+  if (['approval', 'automatic'].indexOf(state.publicationMode) < 0) fail_('PUBLICATION_CONFIG', '公開モードの設定を確認してください。');
+  return state.publicationMode;
+}
+
+function automaticExhibitors_(config) {
+  const db = database_(config);
+  const users = rows_(db.Users);
+  const memberships = rows_(db.Memberships);
+  return rows_(db.Exhibitors).filter(function (record) {
+    if (record.values[1] !== config.eventId) return false;
+    const owners = memberships.filter(function (membership) {
+      return membership.values[2] === record.values[0] && active_(membership.values[3]);
+    });
+    if (owners.length !== 1) return false;
+    const owner = users.filter(function (user) { return user.values[0] === owners[0].values[1]; });
+    // 登録処理途中の出店情報は、OTP確認・アカウント有効化が完了するまで公開しない。
+    return owner.length === 1 && active_(owner[0].values[2]) && !json_(owner[0].values[3]).registration;
+  });
+}
+
 function publicationSettings_(config) {
   const event = eventRecord_(config, false);
-  if (event) return { title: event.state.title, eventDate: event.state.eventDate, venue: event.state.venue,
-    exhibitors: event.state.exhibitors.filter(function (item) { return item.publish; }).map(function (item) { return { exhibitorId: item.exhibitorId, booth: item.booth }; }) };
+  if (event) {
+    const selections = event.state.exhibitors;
+    const exhibitors = publicationMode_(event.state) === 'automatic'
+      ? automaticExhibitors_(config).map(function (record) {
+        const selection = selections.find(function (item) { return item.exhibitorId === record.values[0]; });
+        return { exhibitorId: record.values[0], booth: selection ? selection.booth : '' };
+      })
+      : selections.filter(function (item) { return item.publish; }).map(function (item) { return { exhibitorId: item.exhibitorId, booth: item.booth }; });
+    return { title: event.state.title, eventDate: event.state.eventDate, venue: event.state.venue, exhibitors: exhibitors };
+  }
   return json_(config.properties.getProperty('HF_PUBLICATION_CONFIG_JSON') || 'null');
 }
 

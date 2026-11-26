@@ -17,7 +17,7 @@ function buildCatalogRelease_(config, settings, releaseId, generatedAt, includeF
     const eventDate = text_(settings.eventDate || '', 10, false);
     const venue = text_(settings.venue || '', 200, false);
     if (eventDate && (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate) || !Number.isFinite(Date.parse(eventDate)))) fail_('PUBLICATION_CONFIG', '開催日が不正です。');
-    if (!Array.isArray(settings.exhibitors) || (!live && settings.exhibitors.length < 1) || settings.exhibitors.length > 10) {
+    if (!Array.isArray(settings.exhibitors) || (!live && (settings.exhibitors.length < 1 || settings.exhibitors.length > 10))) {
       fail_('PUBLICATION_CONFIG', '公開対象の出店者を1〜10組指定してください。');
     }
     const db = database_(config, ['Exhibitors']);

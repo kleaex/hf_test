@@ -18,7 +18,7 @@ export function validateCatalog(data, { releaseOnly = false, allowLive = false }
     if (data.eventDate !== undefined) { string(data.eventDate, 10); if (data.eventDate && !/^\d{4}-\d{2}-\d{2}$/.test(data.eventDate)) fail(); }
     if (data.venue !== undefined) string(data.venue, 200);
   }
-  if (!Array.isArray(data.exhibitors) || data.exhibitors.length > 10 || (!live && !data.sample && !data.exhibitors.length)) fail();
+  if (!Array.isArray(data.exhibitors) || (!live && data.exhibitors.length > 10) || (!live && !data.sample && !data.exhibitors.length)) fail();
   const ids = new Set(), booths = new Set(), paths = new Set();
   const id = (value, pattern) => { if (typeof value !== 'string' || !pattern.test(value) || ids.has(value)) fail(); ids.add(value); };
   for (const exhibitor of data.exhibitors) {

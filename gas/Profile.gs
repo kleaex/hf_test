@@ -1,6 +1,7 @@
 function view_(record) {
   const state = json_(record.values[2]);
   const config = config_();
+  const event = eventRecord_(config, false);
   return { exhibitorId: record.values[0], eventId: record.values[1], revision: state.revision,
     profile: state.profile, publications: state.publications.map(function (book) {
       return Object.assign({}, book, { images: (book.images || []).map(function (image) {
@@ -10,7 +11,8 @@ function view_(record) {
       return { publicationId: item.publicationId, image: { id: item.image.id, contentType: item.image.contentType,
         bytes: item.image.bytes, width: item.image.width, height: item.image.height } };
     }), updatedAt: state.updatedAt, editable: editing_(config).editable,
-    editDeadline: editing_(config).deadline, imagesConfigured: !!config.imageFolderId };
+    editDeadline: editing_(config).deadline, imagesConfigured: !!config.imageFolderId,
+    publicationMode: event ? publicationMode_(event.state) : 'approval' };
 }
 
 function text_(value, max, required) {
