@@ -200,8 +200,8 @@ function readImage_(token, imageId) {
   return { contentType: image.contentType, base64: Utilities.base64Encode(storedImageBytes_(context.config, image)) };
 }
 
-function storedImageBytes_(config, image) {
-  const folder = imageFolder_(config);
+function storedImageBytes_(config, image, checkedFolder) {
+  const folder = checkedFolder || imageFolder_(config);
   const file = DriveApp.getFileById(image.fileId);
   privateDriveItem_(file);
   const parents = file.getParents();

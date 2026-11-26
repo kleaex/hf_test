@@ -10,7 +10,11 @@ function getPublicCatalog() {
 }
 
 function getPublicImage(imageId, variant) {
-  return api_(function () { return locked_(function () { return publicImage_(imageId, variant); }); });
+  return api_(function () { return publicImage_(imageId, variant); });
+}
+
+function getPublicImages(imageIds) {
+  return api_(function () { return publicImages_(imageIds, 'thumbnail'); });
 }
 
 function stagePublicationImage(token, request) {

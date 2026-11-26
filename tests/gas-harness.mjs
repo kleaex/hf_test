@@ -22,7 +22,8 @@ export function harness() {
   let now = Date.UTC(2026, 10, 24);
   const state = { mail: [], quota: 100, mailFails: false, lockAvailable: true, locked: false,
     failWrite: null, failAfterWrite: null, decodeFails: false, conversions: 0,
-    folderShared: false, folderViewers: [], folderEditors: [], driveFails: false, exportFolderShared: false, zipEntries: [] };
+    folderShared: false, folderViewers: [], folderEditors: [], driveFails: false, exportFolderShared: false, zipEntries: [],
+    sheetReads: {}, driveReadLocks: [] };
   const files = new Map();
   const iterator = items => { let at = 0; return { hasNext: () => at < items.length, next: () => items[at++] }; };
   function blob(bytes, type, name) {
@@ -44,7 +45,7 @@ export function harness() {
       if (state.driveFails) throw new Error('private Drive failure');
       const id = 'file_' + crypto.randomUUID();
       const file = { id, name: data.getName(), data, shared: false, trashed: false,
-        getId: () => id, getBlob: () => file.data, getOwner: () => ({}), isTrashed: () => file.trashed,
+        getId: () => id, getBlob: () => { state.driveReadLocks.push(state.locked); return file.data; }, getOwner: () => ({}), isTrashed: () => file.trashed,
         getSharingAccess: () => file.shared ? 'ANYONE' : 'PRIVATE', getEditors: () => [], getViewers: () => [],
         getParents: () => iterator([folder]) };
       files.set(id, file); return file;
@@ -59,7 +60,10 @@ export function harness() {
     getLastRow() { return this.data.length; }
     getRange(row, column, height, width) {
       return {
-        getValues: () => Array.from({ length: height }, (_, r) => Array.from({ length: width }, (_, c) => this.data[row - 1 + r]?.[column - 1 + c] ?? '')),
+        getValues: () => {
+          state.sheetReads[this.name] = (state.sheetReads[this.name] || 0) + 1;
+          return Array.from({ length: height }, (_, r) => Array.from({ length: width }, (_, c) => this.data[row - 1 + r]?.[column - 1 + c] ?? ''));
+        },
         setValues: values => {
           if (state.failWrite === this.name) { state.failWrite = null; throw new Error('private backend details'); }
           values.forEach((cells, r) => {

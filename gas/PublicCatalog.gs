@@ -15,21 +15,41 @@ function publicCatalog_() {
 }
 
 function publicImage_(imageId, variant) {
-  if (typeof imageId !== 'string' || !/^img_[a-f0-9]{32}$/.test(imageId)
+  const result = publicImages_([imageId], variant).images[0];
+  if (!result.ok) fail_(result.error.code, result.error.message);
+  return { contentType: result.contentType, base64: result.base64 };
+}
+
+function publicImages_(imageIds, variant) {
+  if (!Array.isArray(imageIds) || imageIds.length < 1 || imageIds.length > 3
+      || imageIds.some(function (id, index) { return typeof id !== 'string' || !/^img_[a-f0-9]{32}$/.test(id) || imageIds.indexOf(id) !== index; })
       || ['thumbnail', 'full'].indexOf(variant) < 0) fail_('NOT_FOUND', '公開画像が見つかりません。');
-  const config = config_();
-  const selections = publicationSettings_(config).exhibitors;
-  const db = database_(config);
-  let image;
-  selections.forEach(function (selection) {
-    const record = one_(db.Exhibitors, 0, selection.exhibitorId);
-    if (!record || record.values[1] !== config.eventId) return;
-    json_(record.values[2]).publications.forEach(function (book) {
-      (book.images || []).forEach(function (item) { if (item.id === imageId) image = item; });
+  // 変更と競合する公開対象の確認だけをロックする。遅いDrive読取で他の画像・保存を待たせない。
+  const snapshot = locked_(function () {
+    const config = config_();
+    const selections = publicationSettings_(config).exhibitors;
+    const records = rows_(database_(config).Exhibitors);
+    const images = Object.create(null);
+    selections.forEach(function (selection) {
+      const matches = records.filter(function (record) { return record.values[0] === selection.exhibitorId; });
+      if (matches.length > 1) fail_('SCHEMA', '保存先に重複があります。運営に確認してください。');
+      const record = matches[0];
+      if (!record || record.values[1] !== config.eventId) return;
+      json_(record.values[2]).publications.forEach(function (book) {
+        (book.images || []).forEach(function (image) {
+          if (imageIds.indexOf(image.id) >= 0) images[image.id] = variant === 'thumbnail' && image.thumbnail ? image.thumbnail : image;
+        });
+      });
     });
+    return { config: config, images: images };
   });
-  if (!image) fail_('NOT_FOUND', '公開画像が見つかりません。');
-  // 旧画像にはサムネイルがない。次の差し替えまでは遅延取得する元画像で互換性を保つ。
-  const selected = variant === 'thumbnail' && image.thumbnail ? image.thumbnail : image;
-  return { contentType: selected.contentType, base64: Utilities.base64Encode(storedImageBytes_(config, selected)) };
+  let folder;
+  return { images: imageIds.map(function (id) {
+    return Object.assign({ id: id }, api_(function () {
+      const image = snapshot.images[id];
+      if (!image) fail_('NOT_FOUND', '公開画像が見つかりません。');
+      if (!folder) folder = imageFolder_(snapshot.config);
+      return { contentType: image.contentType, base64: Utilities.base64Encode(storedImageBytes_(snapshot.config, image, folder)) };
+    }));
+  }) };
 }

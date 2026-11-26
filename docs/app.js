@@ -22,21 +22,74 @@ lightbox.addEventListener('close', () => { openedImage++; fullImage.removeAttrib
 function imageData(id, variant) {
   const key = id + ':' + variant;
   if (imageCache.has(key)) return imageCache.get(key);
-  const promise = new Promise((resolve, reject) => { imageQueue.push({ id, variant, resolve, reject }); drainImages(); });
+  const promise = (async () => {
+    const cached = await cachedImage(id, variant);
+    if (cached) return URL.createObjectURL(cached);
+    return new Promise((resolve, reject) => {
+      imageQueue.push({ id, variant, resolve, reject });
+      Promise.resolve().then(drainImages);
+    });
+  })();
   imageCache.set(key, promise);
   promise.catch(() => imageCache.delete(key));
   return promise;
 }
+// カタログは毎回新規取得する。そこに含まれる不変の画像IDだけをブラウザー内で再利用する。
+async function imageStorage(id, variant) {
+  if (!window.caches) return null;
+  const cache = await window.caches.open('hf-public-images-v1-' + variant);
+  const url = new URL('./__image_cache__/' + id + '/' + variant, location.href);
+  url.searchParams.set('source', window.HF_CONNECTION.gasUrl);
+  return { cache, key: url.href };
+}
+async function cachedImage(id, variant) {
+  try {
+    const storage = await imageStorage(id, variant); if (!storage) return null;
+    const response = await storage.cache.match(storage.key); if (!response) return null;
+    const age = Date.now() - Number(response.headers.get('X-HF-Cached-At'));
+    if (!Number.isFinite(age) || age < 0 || age > 7 * 86400000) { await storage.cache.delete(storage.key); return null; }
+    const blob = await response.blob();
+    if (['image/jpeg', 'image/png'].includes(blob.type) && blob.size > 0 && blob.size <= (variant === 'thumbnail' ? 120000 : 1500000)) return blob;
+  } catch (_) { /* Storage制限時も通常の画像取得を続ける。 */ }
+  return null;
+}
+let cacheWrites = Promise.resolve();
+function keepImage(id, variant, blob) {
+  if (blob.size > (variant === 'thumbnail' ? 120000 : 1500000)) return;
+  cacheWrites = cacheWrites.then(async () => {
+    const storage = await imageStorage(id, variant); if (!storage) return;
+    await storage.cache.put(storage.key, new Response(blob, { headers: { 'Content-Type': blob.type, 'X-HF-Cached-At': String(Date.now()) } }));
+    const keys = await storage.cache.keys();
+    const limit = variant === 'thumbnail' ? 160 : 8;
+    for (const key of keys.slice(0, Math.max(0, keys.length - limit))) await storage.cache.delete(key);
+  }).catch(() => {});
+}
+function decodedImage(result, task) {
+  if (!result || result.ok === false) throw result?.error || new Error('画像を取得できません。');
+  if (!['image/jpeg', 'image/png'].includes(result.contentType) || typeof result.base64 !== 'string'
+      || result.base64.length > 2000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(result.base64)) throw new Error('画像の形式が不正です。');
+  const binary = atob(result.base64);
+  const blob = new Blob([Uint8Array.from(binary, char => char.charCodeAt(0))], { type: result.contentType });
+  keepImage(task.id, task.variant, blob);
+  return URL.createObjectURL(blob);
+}
 function drainImages() {
   while (activeImages < 3 && imageQueue.length) {
-    const task = imageQueue.shift(); activeImages++;
+    // クリックした拡大画像を、未取得の一覧画像より先に処理する。
+    const full = imageQueue.findIndex(task => task.variant === 'full');
+    const tasks = full >= 0 ? imageQueue.splice(full, 1) : imageQueue.splice(0, 3);
+    activeImages++;
     (async () => {
-      const result = await window.hfRpc('getPublicImage', task.id, task.variant);
-      if (!['image/jpeg', 'image/png'].includes(result.contentType) || typeof result.base64 !== 'string'
-          || result.base64.length > 2000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(result.base64)) throw new Error('画像の形式が不正です。');
-      const binary = atob(result.base64);
-      return URL.createObjectURL(new Blob([Uint8Array.from(binary, char => char.charCodeAt(0))], { type: result.contentType }));
-    })().then(task.resolve, task.reject).finally(() => { activeImages--; drainImages(); });
+      const result = tasks[0].variant === 'full'
+        ? { images: [Object.assign({ id: tasks[0].id }, await window.hfRpc('getPublicImage', tasks[0].id, 'full'))] }
+        : await window.hfRpc('getPublicImages', tasks.map(task => task.id));
+      for (const task of tasks) {
+        try {
+          const entry = result.images?.find(image => image.id === task.id);
+          task.resolve(decodedImage(entry, task));
+        } catch (error) { task.reject(error); }
+      }
+    })().catch(error => tasks.forEach(task => task.reject(error))).finally(() => { activeImages--; drainImages(); });
   }
 }
 const imageObserver = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {

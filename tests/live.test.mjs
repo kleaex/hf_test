@@ -177,7 +177,7 @@ test('公開HPは小画像を遅延取得し、クリック時だけ原寸画像
   const settle = () => new Promise(resolve => setImmediate(resolve)); await settle();
   assert.equal(calls.length, 1); assert.equal(calls[0].name, 'getPublicCatalog'); assert.equal(observed.size, 1);
   const button = [...observed][0]; intersect([{ target: button, isIntersecting: true }]); await settle();
-  assert.equal(calls[1].args[1], 'thumbnail'); assert.equal(button.children[0].src, 'blob:local-image');
+  assert.equal(calls[1].name, 'getPublicImages'); assert.deepEqual(Array.from(calls[1].args[0]), [staged.image.id]); assert.equal(button.children[0].src, 'blob:local-image');
   await button.events.click(); await settle(); assert.equal(calls[2].args[1], 'full');
   const dialog = body.children[0]; assert.equal(dialog.open, true); assert.equal(dialog.children[2].src, 'blob:local-image');
   assert.equal(button.href, undefined); dialog.children[0].events.click(); assert.equal(dialog.open, false);
