@@ -2,6 +2,8 @@
 
 ## 自動公開・運営承認モード
 
+- 自動公開の本文再構築はEventSettings・Users・Memberships・Exhibitorsを各1回読み、Sessionsを必要としない。共有キャッシュ命中時はシート読取0回。
+
 `tests/publication-mode.test.mjs` で以下を確認する（ローカルの代替サービス・最小DOM）。
 
 - 既存の未設定環境は運営承認で、従来の公開対象を維持する。

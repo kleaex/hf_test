@@ -4,8 +4,10 @@ function publicCatalog_() {
   const key = publicCacheKey_(config, 'catalog', config.properties.getProperty('HF_PUBLIC_GENERATION') || 'initial');
   const cached = timed_('catalogCache', function () { return cachedPublicJson_(key); });
   if (cached) { cached.generatedAt = Date.now(); return cached; }
+  let settings;
   const data = timed_('catalogBuild', function () {
-    return buildCatalogRelease_(config, publicationSettings_(config), 'rel_1000000000000_000000000000', Date.now(), false, true).catalog;
+    settings = publicationSettings_(config);
+    return buildCatalogRelease_(config, settings, 'rel_1000000000000_000000000000', Date.now(), false, true).catalog;
   });
   data.live = true;
   delete data.releaseId;
@@ -17,7 +19,7 @@ function publicCatalog_() {
     });
   });
   // 同じ正本の読取結果を使い、最初の画像要求でSheetsを読み直さずに済むようにする。
-  timed_('imageIndexSeed', function () { return publicImageIndex_(config); });
+  timed_('imageIndexSeed', function () { return publicImageIndex_(config, settings); });
   keepPublicJson_(key, data, 60);
   return data;
 }
@@ -28,11 +30,11 @@ function publicImage_(imageId, variant) {
   return { contentType: result.contentType, base64: result.base64 };
 }
 
-function publicImageIndex_(config) {
+function publicImageIndex_(config, settings) {
   const key = publicCacheKey_(config, 'imageIndex', config.properties.getProperty('HF_PUBLIC_GENERATION') || 'initial');
   const cached = timed_('catalogCache', function () { return cachedPublicJson_(key); });
   if (cached) return cached;
-  const selections = publicationSettings_(config).exhibitors;
+  const selections = (settings || publicationSettings_(config)).exhibitors;
   const records = HF_REQUEST_ && HF_REQUEST_.sheets.Exhibitors || rows_(database_(config, ['Exhibitors']).Exhibitors);
   const images = Object.create(null);
   selections.forEach(function (selection) {

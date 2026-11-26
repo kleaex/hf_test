@@ -195,7 +195,7 @@ function publicationMode_(state) {
 }
 
 function automaticExhibitors_(config) {
-  const db = database_(config);
+  const db = database_(config, ['Users', 'Memberships', 'Exhibitors']);
   const users = rows_(db.Users);
   const memberships = rows_(db.Memberships);
   return rows_(db.Exhibitors).filter(function (record) {

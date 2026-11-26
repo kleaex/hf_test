@@ -31,6 +31,17 @@ test('既存のモード未設定環境は運営承認となり、既存の公�
   h.setupAdmin(); assert.deepEqual(ids(h), ['exh_a']);
 });
 
+test('自動公開の再構築は必要な4シートだけ読み、セッション一覧を読まない', () => {
+  const h = ready(); const admin = h.loginAdmin(); setMode(h, admin, 'automatic');
+  h.state.cacheEnabled = true; h.state.sheetReads = {};
+  // セッション一覧がなくても、公開本文・画像索引の構築には不要。
+  h.sheets.delete('Sessions');
+  assert.deepEqual(ids(h), ['exh_a', 'exh_b']);
+  assert.deepEqual(h.state.sheetReads, { EventSettings: 1, Users: 1, Memberships: 1, Exhibitors: 1 });
+  h.state.sheetReads = {}; assert.deepEqual(ids(h), ['exh_a', 'exh_b']);
+  assert.deepEqual(h.state.sheetReads, {});
+});
+
 test('自動公開は登録済み・新規OTP確認後の出店を掲載し、承認へ戻すと以前のチェックを使う', () => {
   const h = ready(); const admin = h.loginAdmin(); setMode(h, admin, 'automatic');
   assert.deepEqual(ids(h), ['exh_a', 'exh_b']);
