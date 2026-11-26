@@ -12,7 +12,15 @@ function email_(value) {
   return /^[a-z0-9][a-z0-9.!#$%&'*+/=?^_`{|}~-]*@[a-z0-9.-]+\.[a-z]{2,}$/.test(result) ? result : '';
 }
 
-function config_() {
+function config_(deferEvent) {
+  if (HF_REQUEST_ && HF_REQUEST_.config) {
+    const cached = HF_REQUEST_.config;
+    if (!deferEvent) {
+      const event = eventRecord_(cached, false);
+      if (event) cached.editDeadline = event.state.editDeadline;
+    }
+    return cached;
+  }
   const properties = PropertiesService.getScriptProperties();
   const values = properties.getProperties();
   let emails;
@@ -27,8 +35,11 @@ function config_() {
   const config = { properties: properties, spreadsheetId: values.HF_SPREADSHEET_ID,
     eventId: values.HF_EVENT_ID, secret: values.HF_AUTH_SECRET, emails: emails.map(email_),
     imageFolderId: values.HF_IMAGE_FOLDER_ID || '', editDeadline: values.HF_EDIT_DEADLINE || '' };
-  const settings = eventRecord_(config, false);
-  if (settings) config.editDeadline = settings.state.editDeadline;
+  if (HF_REQUEST_) HF_REQUEST_.config = config;
+  if (!deferEvent) {
+    const settings = eventRecord_(config, false);
+    if (settings) config.editDeadline = settings.state.editDeadline;
+  }
   return config;
 }
 
@@ -43,14 +54,18 @@ function requireEditing_(config) {
   if (!editing_(config).editable) fail_('EDIT_CLOSED', 'カタログの編集期間外です。変更・削除はできません。');
 }
 
-function database_(config) {
+function database_(config, names) {
   const spreadsheet = SpreadsheetApp.openById(config.spreadsheetId);
   const db = {};
-  Object.keys(HF_SCHEMA_).forEach(function (name) {
+  (names || Object.keys(HF_SCHEMA_)).forEach(function (name) {
     const sheet = spreadsheet.getSheetByName(name);
     const columns = HF_SCHEMA_[name];
+    if (HF_REQUEST_) {
+      sheetSnapshot_(sheet, name, columns, 'SCHEMA', '保存先の構造が一致しません。運営に確認してください。');
+      db[name] = sheet; return;
+    }
     if (!sheet || sheet.getLastRow() < 1
-        || JSON.stringify(sheet.getRange(1, 1, 1, columns.length).getValues()[0]) !== JSON.stringify(columns)) {
+        || JSON.stringify(timed_('sheetHeader', function () { return sheet.getRange(1, 1, 1, columns.length).getValues()[0]; })) !== JSON.stringify(columns)) {
       fail_('SCHEMA', '保存先の構造が一致しません。運営に確認してください。');
     }
     db[name] = sheet;
@@ -59,10 +74,21 @@ function database_(config) {
 }
 
 function rows_(sheet) {
+  if (HF_REQUEST_ && HF_REQUEST_.sheets[sheet.getName()]) return HF_REQUEST_.sheets[sheet.getName()];
   const count = sheet.getLastRow() - 1;
   if (!count) return [];
-  return sheet.getRange(2, 1, count, (HF_SCHEMA_[sheet.getName()] || HF_ADMIN_SCHEMA_[sheet.getName()]).length).getValues()
+  return timed_('sheetRead', function () { return sheet.getRange(2, 1, count, (HF_SCHEMA_[sheet.getName()] || HF_ADMIN_SCHEMA_[sheet.getName()]).length).getValues(); })
     .map(function (values, index) { return { row: index + 2, values: values }; });
+}
+
+function sheetSnapshot_(sheet, name, columns, code, message) {
+  if (!sheet || !sheet.getLastRow()) fail_(code, message);
+  if (HF_REQUEST_ && HF_REQUEST_.sheets[name]) return HF_REQUEST_.sheets[name];
+  const values = timed_('sheetRead', function () { return sheet.getRange(1, 1, sheet.getLastRow(), columns.length).getValues(); });
+  if (JSON.stringify(values[0]) !== JSON.stringify(columns)) fail_(code, message);
+  const records = values.slice(1).map(function (row, index) { return { row: index + 2, values: row }; });
+  if (HF_REQUEST_) HF_REQUEST_.sheets[name] = records;
+  return records;
 }
 
 function one_(sheet, column, value) {
@@ -72,9 +98,17 @@ function one_(sheet, column, value) {
 }
 
 function writeRow_(sheet, row, values) {
+  if (HF_REQUEST_) delete HF_REQUEST_.sheets[sheet.getName()];
+  if (['Exhibitors', 'EventSettings'].indexOf(sheet.getName()) >= 0) {
+    // 世代変更に失敗した場合は書込前に停止し、保存成功後に旧公開版が残ることを防ぐ。
+    PropertiesService.getScriptProperties().setProperty('HF_PUBLIC_GENERATION', Utilities.getUuid());
+  }
   // 自由入力はJSONセルにのみ格納する。先頭が { のため数式にはならない。
-  sheet.getRange(row, 1, 1, values.length).setValues([values]);
-  SpreadsheetApp.flush();
+  timed_('sheetWrite', function () {
+    sheet.getRange(row, 1, 1, values.length).setValues([values]);
+    SpreadsheetApp.flush();
+  });
+  if (sheet.getName() === 'EventSettings') freshRequestConfig_();
 }
 
 function json_(value) {

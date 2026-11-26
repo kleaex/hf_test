@@ -16,7 +16,7 @@ test('公開画像3枚を1回のSheets一覧読取で選別し、Drive読取中�
   h.state.sheetReads = {}; h.state.driveReadLocks = [];
   const result = h.call('getPublicImages', ids);
   assert.equal(result.ok, true); assert.equal(result.images.length, 3); assert.ok(result.images.every(image => image.ok));
-  assert.equal(h.state.sheetReads.Exhibitors, 2); // ヘッダー1回と一覧1回。
+  assert.equal(h.state.sheetReads.Exhibitors, 1); // ヘッダーと一覧を一括取得。
   assert.deepEqual(h.state.driveReadLocks, [false, false, false]);
   const mixed = h.call('getPublicImages', [ids[0], 'img_' + 'f'.repeat(32)]);
   assert.equal(mixed.images[0].ok, true); assert.equal(mixed.images[1].error.code, 'NOT_FOUND');
@@ -74,4 +74,26 @@ test('ブラウザー内の画像保存は小画像160点・拡大画像8点に�
   const storage = new Map(), client = imageClient(storage);
   for (let i = 0; i < 9; i++) await client.data('img_' + i.toString(16).padStart(32, '0'), 'full');
   await client.written(); assert.equal(storage.get('hf-public-images-v1-full').size, 8);
+});
+
+test('最初の代表画像2枚は他画像と分け、クリックした拡大画像を待機中の一覧より優先する', async () => {
+  const client = imageClient(); const id = letter => 'img_' + letter.repeat(32);
+  await Promise.all([client.context.imageData(id('a'), 'thumbnail', true), client.context.imageData(id('b'), 'thumbnail', true), client.data(id('c'))]);
+  assert.equal(client.calls.length, 3);
+  for (const call of client.calls) assert.equal(call.args[0].length, 1);
+  // 既に進行中の3要求は中断せず、次に空いた枠で拡大を先に送る。
+  let active = 0; const finish = []; const calls = [];
+  client.context.window.hfRpc = (name, ...args) => {
+    calls.push({ name, args }); active++;
+    return new Promise(resolve => finish.push(() => {
+      active--; resolve(name === 'getPublicImages' ? { images: args[0].map(value => ({ id: value, ok: true, contentType: 'image/png', base64: png })) }
+        : { ok: true, contentType: 'image/png', base64: png });
+    }));
+  };
+  const pending = Array.from({ length: 12 }, (_, i) => client.data('img_' + i.toString(16).padStart(32, '0')));
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(active, 3);
+  const full = client.data(id('f'), 'full'); await new Promise(resolve => setImmediate(resolve));
+  finish.shift()(); await new Promise(resolve => setImmediate(resolve)); assert.equal(calls[3].name, 'getPublicImage');
+  while (finish.length) { finish.shift()(); await new Promise(resolve => setImmediate(resolve)); }
+  await Promise.all([...pending, full]);
 });

@@ -40,6 +40,9 @@ test('二重iframeのready・RPC応答を照合し、別窓・別origin・別non
   await settle(); assert.equal(completed, false);
   c.message(response); assert.equal((await request).data.name, '本人');
   c.message(response); assert.equal(c.timers.size, 0);
+  const measurements = c.window.hfPerformance.snapshot();
+  assert.deepEqual(Array.from(measurements, item => item.operation), ['bridge', 'getMyProfile']);
+  assert.doesNotMatch(JSON.stringify(measurements), /private-token|本人|example|google/);
 });
 test('接続・応答のタイムアウトを成功扱いにせず、接続失敗後は新しいnonceで再試行', async () => {
   const c = client(); const first = c.window.hfRpc('getPublicCatalog'); const rejected = assert.rejects(first, error => error.network === true);

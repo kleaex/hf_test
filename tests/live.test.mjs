@@ -129,6 +129,10 @@ test('HP編集画面は仮保存中の文章を保ち、最終保存で公開す
   assert.equal(h.call('getPublicCatalog').data.exhibitors[0].publications[0].images.length, 0);
   await client.event('profileForm', 'submit');
   const data = h.call('getPublicCatalog').data; assert.equal(data.exhibitors[0].name, '未保存の紹介'); assert.equal(data.exhibitors[0].publications[0].images.length, 1);
+  const all = node => [node, ...node.children.flatMap(all)];
+  const previews = all(client.elements.books).filter(node => node.tagName === 'img');
+  assert.equal(previews.length, 1); assert.equal(previews[0].hidden, false); assert.match(previews[0].src, /^data:image\/png;base64,/);
+  assert.equal(client.calls.some(item => item.name === 'getPublicationImage'), false);
 });
 test('HP運営画面はZIP確認操作なしで保存し、公開対象の変更を反映', async () => {
   const { h } = ready(); const admin = h.loginAdmin();

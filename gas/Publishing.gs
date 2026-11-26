@@ -20,7 +20,8 @@ function buildCatalogRelease_(config, settings, releaseId, generatedAt, includeF
     if (!Array.isArray(settings.exhibitors) || (!live && settings.exhibitors.length < 1) || settings.exhibitors.length > 10) {
       fail_('PUBLICATION_CONFIG', '公開対象の出店者を1〜10組指定してください。');
     }
-    const db = database_(config);
+    const db = database_(config, ['Exhibitors']);
+    const records = rows_(db.Exhibitors);
     const blobs = [], selected = [], booths = [], imageIds = [], publicationIds = [];
     let totalBytes = 0;
     const exhibitors = settings.exhibitors.map(function (selection) {
@@ -32,7 +33,9 @@ function buildCatalogRelease_(config, settings, releaseId, generatedAt, includeF
       const booth = text_(selection.booth, 40, false);
       if (booth && booths.indexOf(booth) >= 0) fail_('PUBLICATION_CONFIG', 'ブース番号が重複しています。');
       if (booth) booths.push(booth);
-      const record = one_(db.Exhibitors, 0, selection.exhibitorId);
+      const matches = records.filter(function (record) { return record.values[0] === selection.exhibitorId; });
+      if (matches.length > 1) fail_('SCHEMA', '保存先に重複があります。運営に確認してください。');
+      const record = matches[0];
       if (!record || record.values[1] !== config.eventId) fail_('PUBLICATION_CONFIG', '対象開催回の出店者が見つかりません。');
       const state = json_(record.values[2]);
       if (!Array.isArray(state.publications) || state.publications.length > 10) fail_('PUBLICATION_CONFIG', '作品一覧が不正です。');

@@ -9,6 +9,7 @@ let exhibitors = [];
 const imageCache = new Map();
 const imageQueue = [];
 let activeImages = 0;
+let initialPreviews = 0;
 const lightbox = document.createElement('dialog');
 lightbox.className = 'image-dialog';
 const fullImage = document.createElement('img');
@@ -19,14 +20,14 @@ lightbox.append(closeImage, imageMessage, fullImage); document.body.append(light
 let openedImage = 0;
 lightbox.addEventListener('close', () => { openedImage++; fullImage.removeAttribute('src'); });
 
-function imageData(id, variant) {
+function imageData(id, variant, representative = false) {
   const key = id + ':' + variant;
   if (imageCache.has(key)) return imageCache.get(key);
   const promise = (async () => {
     const cached = await cachedImage(id, variant);
     if (cached) return URL.createObjectURL(cached);
     return new Promise((resolve, reject) => {
-      imageQueue.push({ id, variant, resolve, reject });
+      imageQueue.push({ id, variant, resolve, reject, priority: representative && initialPreviews++ < 2 });
       Promise.resolve().then(drainImages);
     });
   })();
@@ -77,7 +78,8 @@ function drainImages() {
   while (activeImages < 3 && imageQueue.length) {
     // クリックした拡大画像を、未取得の一覧画像より先に処理する。
     const full = imageQueue.findIndex(task => task.variant === 'full');
-    const tasks = full >= 0 ? imageQueue.splice(full, 1) : imageQueue.splice(0, 3);
+    const priority = imageQueue.findIndex(task => task.priority);
+    const tasks = full >= 0 ? imageQueue.splice(full, 1) : priority >= 0 ? imageQueue.splice(priority, 1) : imageQueue.splice(0, 3);
     activeImages++;
     (async () => {
       const result = tasks[0].variant === 'full'
@@ -114,11 +116,12 @@ function imageLink(image, title, index) {
     const img = element('img'); img.alt = title + 'の画像' + (index + 1); img.width = image.width; img.height = image.height; img.decoding = 'async';
     link.append(img);
     link.loadPreview = async () => {
-      try { img.src = await imageData(image.id, 'thumbnail'); }
+      try { img.src = await imageData(image.id, 'thumbnail', index === 0); }
       catch (_) { link.replaceChildren(element('span', '画像の取得を再試行')); }
     };
     link.addEventListener('click', async () => {
       const request = ++openedImage; imageMessage.textContent = '画像を読み込んでいます。'; fullImage.removeAttribute('src'); fullImage.alt = img.alt;
+      if (img.src) { fullImage.src = img.src; imageMessage.textContent = '高画質の画像を読み込んでいます。'; }
       if (!lightbox.open) lightbox.showModal();
       try { const url = await imageData(image.id, 'full'); if (request === openedImage) { fullImage.src = url; imageMessage.textContent = ''; } }
       catch (_) { if (request === openedImage) imageMessage.textContent = '画像を読み込めませんでした。閉じて再試行してください。'; }
@@ -203,7 +206,7 @@ async function load() {
     }
     search.addEventListener('input', render);
     genre.addEventListener('change', render);
-    render();
+    const started = Date.now(); render(); window.hfPerformance?.record('catalogPaint', Date.now() - started);
   } catch (error) {
     catalog.replaceChildren();
     status.textContent = 'カタログを読み込めませんでした。時間をおいて再読み込みしてください。';

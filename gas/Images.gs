@@ -2,10 +2,12 @@
 const HF_IMAGE_MAX_ = 1500000;
 
 function imageFolder_(config) {
-  if (!/^[A-Za-z0-9_-]{10,}$/.test(config.imageFolderId)) fail_('IMAGE_CONFIG', '画像保存先が未設定です。運営に確認してください。');
-  const folder = DriveApp.getFolderById(config.imageFolderId);
-  privateDriveItem_(folder);
-  return folder;
+  return timed_('driveMetadata', function () {
+    if (!/^[A-Za-z0-9_-]{10,}$/.test(config.imageFolderId)) fail_('IMAGE_CONFIG', '画像保存先が未設定です。運営に確認してください。');
+    const folder = DriveApp.getFolderById(config.imageFolderId);
+    privateDriveItem_(folder);
+    return folder;
+  });
 }
 
 function privateDriveItem_(item) {
@@ -109,7 +111,7 @@ function validateImage_(request) {
   return inspected;
 }
 
-function uploadImage_(token, request, staged) {
+function checkImageUpload_(token, request, staged) {
   const context = authenticate_(token);
   keys_(request, staged ? ['publicationId', 'revision', 'requestId', 'contentType', 'base64', 'thumbnail'] : ['publicationId', 'revision', 'requestId', 'contentType', 'base64']);
   if (typeof request.requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,80}$/.test(request.requestId)
@@ -126,7 +128,7 @@ function uploadImage_(token, request, staged) {
   const receipt = state.receipts.find(function (item) { return item.id === request.requestId; });
   if (receipt) {
     if (receipt.fingerprint !== fingerprint) fail_('REQUEST_REUSED', '同じ保存要求IDを別の画像には使用できません。');
-    return { data: view_(context.record), replayed: true, savedRevision: receipt.revision };
+    return { replay: { data: view_(context.record), replayed: true, savedRevision: receipt.revision } };
   }
   requireEditing_(context.config);
   if (state.revision !== request.revision) fail_('CONFLICT', '別の画面で更新されています。保存済みの内容を読み直してください。');
@@ -136,50 +138,70 @@ function uploadImage_(token, request, staged) {
   const budget = state.imageBudget || {};
   const day = Math.floor(Date.now() / 86400000);
   if (budget.day === day && (budget.count >= 30 || budget.bytes + bytes.length > 30000000)) fail_('IMAGE_LIMIT', '本日の画像登録上限に達しました。運営に確認してください。');
+  let uploadedBytes = bytes.length;
+  if (staged) {
+    keys_(request.thumbnail, ['contentType', 'base64']);
+    const smallBytes = imageBytes_(request.thumbnail);
+    if (smallBytes.length > 120000) fail_('IMAGE_INVALID', 'サムネイルは120KB以内にしてください。');
+    uploadedBytes += smallBytes.length;
+  }
+  if (budget.day === day && budget.bytes + uploadedBytes > 30000000) fail_('IMAGE_LIMIT', '本日の画像登録上限に達しました。運営に確認してください。');
+  return { context: context, state: state, book: book, draft: draft, budget: budget, day: day,
+    fingerprint: fingerprint, uploadedBytes: uploadedBytes };
+}
+
+function prepareImageUpload_(context, request, staged) {
   const folder = imageFolder_(context.config);
-  const validated = validateImage_(request);
+  const validated = timed_('imageValidate', function () { return validateImage_(request); });
   let thumbnail;
   if (staged) {
     keys_(request.thumbnail, ['contentType', 'base64']);
-    const small = validateImage_(request.thumbnail);
+    const small = timed_('thumbnailValidate', function () { return validateImage_(request.thumbnail); });
     if (small.width > 400 || small.height > 400 || small.bytes.length > 120000) fail_('IMAGE_INVALID', 'サムネイルは長辺400px・120KB以内にしてください。');
     thumbnail = { bytes: small.bytes, contentType: request.thumbnail.contentType, width: small.width, height: small.height };
   }
-  const uploadedBytes = bytes.length + (thumbnail ? thumbnail.bytes.length : 0);
-  if (budget.day === day && budget.bytes + uploadedBytes > 30000000) fail_('IMAGE_LIMIT', '本日の画像登録上限に達しました。運営に確認してください。');
-  const hash = digest_(context.config, 'image-bytes', Utilities.base64Encode(validated.bytes));
-  const fileName = 'hf_' + digest_(context.config, 'image-file', context.config.eventId + ':' + context.record.values[0] + ':' + request.requestId)
-    + (request.contentType === 'image/png' ? '.png' : '.jpg');
-  const files = folder.getFilesByName(fileName);
-  let file;
-  if (files.hasNext()) {
-    file = files.next();
-    if (files.hasNext()) fail_('IMAGE_CONFIG', '画像保存先に重複があります。運営に確認してください。');
-    if (digest_(context.config, 'image-bytes', Utilities.base64Encode(file.getBlob().getBytes())) !== hash) {
-      fail_('REQUEST_REUSED', '同じ保存要求IDを別の画像には使用できません。');
+  return timed_('driveSave', function () {
+    const hash = digest_(context.config, 'image-bytes', Utilities.base64Encode(validated.bytes));
+    const fileName = 'hf_' + digest_(context.config, 'image-file', context.config.eventId + ':' + context.record.values[0] + ':' + request.requestId)
+      + (request.contentType === 'image/png' ? '.png' : '.jpg');
+    const files = folder.getFilesByName(fileName);
+    let file;
+    if (files.hasNext()) {
+      file = files.next();
+      if (files.hasNext()) fail_('IMAGE_CONFIG', '画像保存先に重複があります。運営に確認してください。');
+      if (digest_(context.config, 'image-bytes', Utilities.base64Encode(file.getBlob().getBytes())) !== hash) {
+        fail_('REQUEST_REUSED', '同じ保存要求IDを別の画像には使用できません。');
+      }
+    } else file = folder.createFile(Utilities.newBlob(validated.bytes, request.contentType, fileName));
+    privateDriveItem_(file);
+    const image = { id: 'img_' + random_(context.config, 'image-id').slice(0, 32), fileId: file.getId(),
+      contentType: request.contentType, width: validated.width, height: validated.height,
+      bytes: validated.bytes.length, hash: hash };
+    if (thumbnail) {
+      const name = fileName + '.thumbnail';
+      const matches = folder.getFilesByName(name);
+      const existed = matches.hasNext();
+      const smallFile = existed ? matches.next() : folder.createFile(Utilities.newBlob(thumbnail.bytes, thumbnail.contentType, name));
+      privateDriveItem_(smallFile);
+      const smallHash = digest_(context.config, 'image-bytes', Utilities.base64Encode(thumbnail.bytes));
+      if (matches.hasNext() || (existed && digest_(context.config, 'image-bytes', Utilities.base64Encode(smallFile.getBlob().getBytes())) !== smallHash)) fail_('REQUEST_REUSED', '画像の再送内容が一致しません。');
+      image.thumbnail = { fileId: smallFile.getId(), contentType: thumbnail.contentType, width: thumbnail.width,
+        height: thumbnail.height, bytes: thumbnail.bytes.length, hash: smallHash };
     }
-  } else file = folder.createFile(Utilities.newBlob(validated.bytes, request.contentType, fileName));
-  privateDriveItem_(file);
-  const image = { id: 'img_' + random_(context.config, 'image-id').slice(0, 32), fileId: file.getId(),
-    contentType: request.contentType, width: validated.width, height: validated.height,
-    bytes: validated.bytes.length, hash: hash };
-  if (thumbnail) {
-    const name = fileName + '.thumbnail';
-    const matches = folder.getFilesByName(name);
-    const smallFile = matches.hasNext() ? matches.next() : folder.createFile(Utilities.newBlob(thumbnail.bytes, thumbnail.contentType, name));
-    privateDriveItem_(smallFile);
-    const smallHash = digest_(context.config, 'image-bytes', Utilities.base64Encode(thumbnail.bytes));
-    if (matches.hasNext() || digest_(context.config, 'image-bytes', Utilities.base64Encode(smallFile.getBlob().getBytes())) !== smallHash) fail_('REQUEST_REUSED', '画像の再送内容が一致しません。');
-    image.thumbnail = { fileId: smallFile.getId(), contentType: thumbnail.contentType, width: thumbnail.width,
-      height: thumbnail.height, bytes: thumbnail.bytes.length, hash: smallHash };
-  }
+    return image;
+  });
+}
+
+function commitImageUpload_(checked, request, image, staged) {
+  const context = checked.context, state = checked.state, book = checked.book, draft = checked.draft;
+  const budget = checked.budget, day = checked.day;
   if (staged) state.stagedImages = draft.concat([{ publicationId: book.id, expiresAt: Date.now() + 86400000, image: image }]);
   else book.images = (book.images || []).concat([image]);
   state.revision++;
   state.updatedAt = Date.now();
   state.imageBudget = { day: day, count: (budget.day === day ? budget.count : 0) + 1,
-    bytes: (budget.day === day ? budget.bytes : 0) + uploadedBytes };
-  state.receipts = state.receipts.concat([{ id: request.requestId, fingerprint: fingerprint, revision: state.revision,
+    bytes: (budget.day === day ? budget.bytes : 0) + checked.uploadedBytes };
+  state.receipts = state.receipts.concat([{ id: request.requestId, fingerprint: checked.fingerprint, revision: state.revision,
     userId: context.user.values[0], savedAt: Date.now() }]).slice(-20);
   const serialized = JSON.stringify(state);
   if (serialized.length > 45000) fail_('VALIDATION', '保存データが大きすぎます。紹介文を短くしてください。');
@@ -188,25 +210,89 @@ function uploadImage_(token, request, staged) {
   return { data: view_({ values: [context.record.values[0], context.config.eventId, serialized] }), replayed: false, savedRevision: state.revision };
 }
 
-function readImage_(token, imageId) {
-  const context = authenticate_(token);
-  const state = json_(context.record.values[2]);
-  let image;
-  state.publications.forEach(function (book) {
-    (book.images || []).forEach(function (item) { if (item.id === imageId) image = item; });
+function uploadImage_(token, request, staged) {
+  const checked = checkImageUpload_(token, request, staged);
+  if (checked.replay) return checked.replay;
+  return commitImageUpload_(checked, request, prepareImageUpload_(checked.context, request, staged), staged);
+}
+
+function stageImage_(token, request) {
+  // 同じ出店者の処理を1件予約し、重い画像変換・Drive作成は共通ロックの外で行う。
+  const reservation = locked_(function () {
+    const checked = timed_('imageAuthorize', function () { return checkImageUpload_(token, request, true); });
+    if (checked.replay) return checked;
+    const config = checked.context.config;
+    const key = 'HF_UPLOAD_' + digest_(config, 'upload-reservation', config.eventId + ':' + checked.context.record.values[0]).slice(0, 32);
+    const previous = json_(config.properties.getProperty(key) || 'null');
+    if (previous && previous.until > Date.now()) fail_('BUSY', '画像を登録中です。少し待って同じ操作を再試行してください。');
+    const lease = random_(config, 'upload-lease');
+    config.properties.setProperty(key, JSON.stringify({ lease: lease, until: Date.now() + 10 * 60000 }));
+    return { checked: checked, key: key, lease: lease };
+  });
+  if (reservation.replay) return reservation.replay;
+  try {
+    const image = prepareImageUpload_(reservation.checked.context, request, true);
+    return locked_(function () {
+      freshRequestConfig_();
+      return timed_('imageCommit', function () {
+        // 変換中のログアウト・停止・締切・他画面保存を反映して再検証する。
+        const checked = checkImageUpload_(token, request, true);
+        if (checked.replay) return checked.replay;
+        const current = json_(checked.context.config.properties.getProperty(reservation.key) || 'null');
+        if (!current || current.lease !== reservation.lease || current.until <= Date.now()) fail_('CONFLICT', '画像の登録予約が失効しました。保存済みの内容を確認してください。');
+        return commitImageUpload_(checked, request, image, true);
+      });
+    });
+  } finally {
+    try { locked_(function () {
+      const properties = reservation.checked.context.config.properties;
+      const current = json_(properties.getProperty(reservation.key) || 'null');
+      if (current && current.lease === reservation.lease) properties.deleteProperty(reservation.key);
+    }); } catch (_) { /* 強制終了等の予約は10分で失効。同じ要求の結果確認は可能。 */ }
+  }
+}
+
+function readImage_(token, imageId, variant) {
+  const snapshot = locked_(function () {
+    const context = authenticate_(token);
+    if (variant !== undefined && ['thumbnail', 'full'].indexOf(variant) < 0) fail_('VALIDATION', '画像の種類が正しくありません。');
+    const state = json_(context.record.values[2]);
+    let image;
+    state.publications.forEach(function (book) {
+      (book.images || []).forEach(function (item) { if (item.id === imageId) image = item; });
   });
   (state.stagedImages || []).forEach(function (item) { if (item.expiresAt > Date.now() && item.image.id === imageId) image = item.image; });
   if (!image) fail_('FORBIDDEN', 'この出店者に属さない画像は取得できません。');
-  return { contentType: image.contentType, base64: Utilities.base64Encode(storedImageBytes_(context.config, image)) };
+  return { config: context.config, image: variant === 'thumbnail' && image.thumbnail ? image.thumbnail : image };
+  });
+  return { contentType: snapshot.image.contentType, base64: Utilities.base64Encode(storedImageBytes_(snapshot.config, snapshot.image)) };
 }
 
-function storedImageBytes_(config, image, checkedFolder) {
+function storedImageBytes_(config, image, checkedFolder, sharedCache) {
   const folder = checkedFolder || imageFolder_(config);
-  const file = DriveApp.getFileById(image.fileId);
-  privateDriveItem_(file);
-  const parents = file.getParents();
-  if (!parents.hasNext() || parents.next().getId() !== folder.getId() || parents.hasNext()) fail_('IMAGE_CONFIG', '画像の保存先が一致しません。');
-  const bytes = file.getBlob().getBytes();
+  const metadata = timed_('driveMetadata', function () {
+    const file = DriveApp.getFileById(image.fileId);
+    privateDriveItem_(file);
+    const parents = file.getParents();
+    if (!parents.hasNext() || parents.next().getId() !== folder.getId() || parents.hasNext()) fail_('IMAGE_CONFIG', '画像の保存先が一致しません。');
+    return { file: file, modified: sharedCache && image.bytes <= 60000 ? file.getLastUpdated().getTime() : null };
+  });
+  const file = metadata.file;
+  let key;
+  // フォルダ・ファイルの非公開状態と所属を確認した後にのみ共有キャッシュを使う。
+  // Driveの更新日時も鍵に含め、外部からのファイル変更を古い内容で覆い隠さない。
+  if (sharedCache && image.bytes <= 60000) {
+    key = publicCacheKey_(config, 'image', [image.fileId, image.hash, metadata.modified].join(':'));
+    const cached = timed_('sharedImageCache', function () { return cachedSmallImage_(key); });
+    if (typeof cached === 'string') {
+      try {
+        const stored = Utilities.base64Decode(cached);
+        if (stored.length === image.bytes && digest_(config, 'image-bytes', cached) === image.hash) return stored;
+      } catch (_) { /* キャッシュ破損時は正本を検証し直す。 */ }
+    }
+  }
+  const bytes = timed_('driveRead', function () { return file.getBlob().getBytes(); });
   if (bytes.length !== image.bytes || digest_(config, 'image-bytes', Utilities.base64Encode(bytes)) !== image.hash) fail_('IMAGE_INVALID', '保存画像の内容が一致しません。');
+  if (key) keepSmallImage_(key, Utilities.base64Encode(bytes));
   return bytes;
 }

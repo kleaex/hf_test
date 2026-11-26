@@ -18,7 +18,7 @@ function getPublicImages(imageIds) {
 }
 
 function stagePublicationImage(token, request) {
-  return api_(function () { return locked_(function () { return uploadImage_(token, request, true); }); });
+  return api_(function () { return stageImage_(token, request); });
 }
 
 function getSystemStatus() {
@@ -55,8 +55,8 @@ function uploadPublicationImage(token, request) {
   return api_(function () { return locked_(function () { return uploadImage_(token, request); }); });
 }
 
-function getPublicationImage(token, imageId) {
-  return api_(function () { return locked_(function () { return readImage_(token, imageId); }); });
+function getPublicationImage(token, imageId, variant) {
+  return api_(function () { return readImage_(token, imageId, variant); });
 }
 
 function logout(token) {
@@ -109,13 +109,25 @@ function logoutAdmin(token) {
 }
 
 function api_(operation) {
-  try { return Object.assign({ ok: true }, operation()); }
+  const owner = !HF_REQUEST_;
+  if (owner) HF_REQUEST_ = { start: Date.now(), stages: {}, config: null, sheets: {} };
+  let result;
+  try { result = Object.assign({ ok: true }, operation()); }
   catch (error) {
     // 生の例外・接続先・入力・トークンはクライアントやログへ出さない。
-    return { ok: false, error: error && error.hfCode
+    result = { ok: false, error: error && error.hfCode
       ? { code: error.hfCode, message: error.message }
       : { code: 'UNAVAILABLE', message: '処理を完了できませんでした。時間をおいて再試行してください。' } };
   }
+  if (owner) {
+    try {
+      if (PropertiesService.getScriptProperties().getProperty('HF_PERFORMANCE') === 'true') {
+        result.performance = { totalMs: Date.now() - HF_REQUEST_.start, stages: HF_REQUEST_.stages };
+      }
+    } catch (_) { /* 計測設定の障害で処理結果を変えない。 */ }
+    HF_REQUEST_ = null;
+  }
+  return result;
 }
 
 function fail_(code, message) {
@@ -126,6 +138,6 @@ function fail_(code, message) {
 
 function locked_(operation) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) fail_('BUSY', '処理が混み合っています。同じ操作を再試行してください。');
-  try { return operation(); } finally { lock.releaseLock(); }
+  if (!timed_('lockWait', function () { return lock.tryLock(10000); })) fail_('BUSY', '処理が混み合っています。同じ操作を再試行してください。');
+  try { return timed_('lockHeld', operation); } finally { lock.releaseLock(); }
 }

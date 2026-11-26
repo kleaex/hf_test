@@ -23,7 +23,9 @@ export function harness() {
   const state = { mail: [], quota: 100, mailFails: false, lockAvailable: true, locked: false,
     failWrite: null, failAfterWrite: null, decodeFails: false, conversions: 0,
     folderShared: false, folderViewers: [], folderEditors: [], driveFails: false, exportFolderShared: false, zipEntries: [],
-    sheetReads: {}, driveReadLocks: [] };
+    sheetReads: {}, driveReadLocks: [], decodeLocks: [], createLocks: [], cacheEnabled: false,
+    cacheFails: false, failProperty: null, beforeDecode: null, beforeCreate: null };
+  const cache = new Map();
   const files = new Map();
   const iterator = items => { let at = 0; return { hasNext: () => at < items.length, next: () => items[at++] }; };
   function blob(bytes, type, name) {
@@ -31,6 +33,8 @@ export function harness() {
     return { getBytes: () => [...bytes], getContentType: () => type, getName: () => name,
       getAs: output => {
         state.conversions++;
+        state.decodeLocks.push(state.locked);
+        if (state.beforeDecode) { const hook = state.beforeDecode; state.beforeDecode = null; hook(); }
         if (state.decodeFails) throw new Error('decode failed');
         // Googleの実デコーダーは代替しない。テスト用2x2の変換結果だけを返す。
         return blob([...Buffer.from(output === 'image/png' ? png : jpeg, 'base64')], output, name);
@@ -42,11 +46,14 @@ export function harness() {
     getViewers: () => state.folderViewers, getEditors: () => state.folderEditors,
     getFilesByName: name => iterator([...files.values()].filter(file => file.name === name && !file.trashed)),
     createFile: data => {
+      state.createLocks.push(state.locked);
+      if (state.beforeCreate) { const hook = state.beforeCreate; state.beforeCreate = null; hook(); }
       if (state.driveFails) throw new Error('private Drive failure');
       const id = 'file_' + crypto.randomUUID();
       const file = { id, name: data.getName(), data, shared: false, trashed: false,
         getId: () => id, getBlob: () => { state.driveReadLocks.push(state.locked); return file.data; }, getOwner: () => ({}), isTrashed: () => file.trashed,
         getSharingAccess: () => file.shared ? 'ANYONE' : 'PRIVATE', getEditors: () => [], getViewers: () => [],
+        getLastUpdated: () => new Date(file.modifiedAt || 1),
         getParents: () => iterator([folder]) };
       files.set(id, file); return file;
     }
@@ -81,7 +88,17 @@ export function harness() {
   const context = vm.createContext({
     Date: Clock,
     PropertiesService: { getScriptProperties: () => ({ getProperties: () => ({ ...properties }),
-      getProperty: key => properties[key] ?? null, setProperty: (key, value) => { properties[key] = value; } }) },
+      getProperty: key => properties[key] ?? null, setProperty: (key, value) => {
+        if (state.failProperty === key) throw Error('property failure'); properties[key] = value;
+      },
+      deleteProperty: key => { delete properties[key]; } }) },
+    CacheService: { getScriptCache: () => {
+      if (state.cacheFails) throw Error('cache unavailable');
+      const get = key => state.cacheEnabled && cache.get(key)?.until > now ? cache.get(key).value : null;
+      const put = (key, value, seconds) => { if (state.cacheEnabled) cache.set(key, { value, until: now + seconds * 1000 }); };
+      return { get, put, getAll: keys => Object.fromEntries(keys.map(key => [key, get(key)]).filter(([, value]) => value !== null)),
+        putAll: (values, seconds) => Object.entries(values).forEach(([key, value]) => put(key, value, seconds)) };
+    } },
     SpreadsheetApp: { openById: id => {
       if (id !== 'test_spreadsheet_not_a_real_id') throw new Error('not connected');
       return spreadsheet;
@@ -109,7 +126,7 @@ export function harness() {
       base64Encode: bytes => Buffer.from(bytes.map(byte => (byte + 256) % 256)).toString('base64'), newBlob: blob,
       computeHmacSha256Signature: (value, key) => [...crypto.createHmac('sha256', key).update(value).digest()].map(byte => byte > 127 ? byte - 256 : byte) }
   });
-  for (const name of ['Code', 'Store', 'Auth', 'Profile', 'Admin', 'Images', 'Publishing', 'AdminConsole', 'Transport', 'PublicCatalog']) vm.runInContext(fs.readFileSync(new URL('../gas/' + name + '.gs', import.meta.url), 'utf8'), context, { filename: name + '.gs' });
+  for (const name of ['Code', 'Store', 'Auth', 'Profile', 'Admin', 'Images', 'Publishing', 'AdminConsole', 'Transport', 'PublicCatalog', 'Performance', 'PublicCache']) vm.runInContext(fs.readFileSync(new URL('../gas/' + name + '.gs', import.meta.url), 'utf8'), context, { filename: name + '.gs' });
   const call = (name, ...args) => JSON.parse(JSON.stringify(context[name](...JSON.parse(JSON.stringify(args)))));
   const setup = () => call('setupExperiment_');
   const code = email => state.mail.findLast(mail => mail.to === email)?.body.match(/確認コード: (\d{6})/)[1];
@@ -119,7 +136,7 @@ export function harness() {
   };
   const setupAdmin = () => call('setupAdminConsole_');
   const loginAdmin = (email = 'ops@example.invalid') => { call('requestAdminLoginCode', email); return call('verifyAdminLoginCode', email, code(email)); };
-  return { call, setup, login, code, setupAdmin, loginAdmin, sheets, properties, state, files, tick: ms => { now += ms; } };
+  return { call, setup, login, code, setupAdmin, loginAdmin, sheets, properties, state, files, cache, tick: ms => { now += ms; } };
 }
 
 export function saveRequest(data, overrides = {}) {

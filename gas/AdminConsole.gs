@@ -14,19 +14,28 @@ function adminEmails_(config) {
 }
 
 function checkAdminSheet_(sheet, name) {
-  if (!sheet || !sheet.getLastRow() || JSON.stringify(sheet.getRange(1, 1, 1, HF_ADMIN_SCHEMA_[name].length).getValues()[0]) !== JSON.stringify(HF_ADMIN_SCHEMA_[name])) {
+  if (HF_REQUEST_) {
+    sheetSnapshot_(sheet, name, HF_ADMIN_SCHEMA_[name], 'ADMIN_CONFIG', '運営画面用シートの初期設定が必要です。');
+    return sheet;
+  }
+  if (!sheet || !sheet.getLastRow() || JSON.stringify(timed_('sheetHeader', function () { return sheet.getRange(1, 1, 1, HF_ADMIN_SCHEMA_[name].length).getValues()[0]; })) !== JSON.stringify(HF_ADMIN_SCHEMA_[name])) {
     fail_('ADMIN_CONFIG', '運営画面用シートの初期設定が必要です。');
   }
   return sheet;
 }
 
 function eventRecord_(config, required) {
+  if (Object.prototype.hasOwnProperty.call(config, 'eventRecord')) {
+    if (required && !config.eventRecord) fail_('ADMIN_CONFIG', '開催設定がありません。');
+    return config.eventRecord;
+  }
   const sheet = SpreadsheetApp.openById(config.spreadsheetId).getSheetByName('EventSettings');
-  if (!sheet) { if (required) fail_('ADMIN_CONFIG', '運営画面の初期設定が必要です。'); return null; }
+  if (!sheet) { if (required) fail_('ADMIN_CONFIG', '運営画面の初期設定が必要です。'); config.eventRecord = null; return null; }
   checkAdminSheet_(sheet, 'EventSettings');
   const record = one_(sheet, 0, config.eventId);
-  if (!record) { if (required) fail_('ADMIN_CONFIG', '開催設定がありません。'); return null; }
-  return { sheet: sheet, row: record.row, state: json_(record.values[1]) };
+  if (!record) { if (required) fail_('ADMIN_CONFIG', '開催設定がありません。'); config.eventRecord = null; return null; }
+  config.eventRecord = { sheet: sheet, row: record.row, state: json_(record.values[1]) };
+  return config.eventRecord;
 }
 
 function adminDatabase_(config) {

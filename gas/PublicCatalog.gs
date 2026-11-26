@@ -1,7 +1,12 @@
-// 正本の保存済み公開項目のみを都度読み出す。公開用コピーの更新・承認を必要としない。
+// 正本から公開項目だけを構築し、保存前に世代を変える共有キャッシュで再利用する。承認・手動反映は不要。
 function publicCatalog_() {
-  const config = config_();
-  const data = buildCatalogRelease_(config, publicationSettings_(config), 'rel_1000000000000_000000000000', Date.now(), false, true).catalog;
+  const config = config_(true);
+  const key = publicCacheKey_(config, 'catalog', config.properties.getProperty('HF_PUBLIC_GENERATION') || 'initial');
+  const cached = timed_('catalogCache', function () { return cachedPublicJson_(key); });
+  if (cached) { cached.generatedAt = Date.now(); return cached; }
+  const data = timed_('catalogBuild', function () {
+    return buildCatalogRelease_(config, publicationSettings_(config), 'rel_1000000000000_000000000000', Date.now(), false, true).catalog;
+  });
   data.live = true;
   delete data.releaseId;
   data.exhibitors.forEach(function (exhibitor) {
@@ -11,6 +16,7 @@ function publicCatalog_() {
       });
     });
   });
+  keepPublicJson_(key, data, 60);
   return data;
 }
 
@@ -26,22 +32,31 @@ function publicImages_(imageIds, variant) {
       || ['thumbnail', 'full'].indexOf(variant) < 0) fail_('NOT_FOUND', '公開画像が見つかりません。');
   // 変更と競合する公開対象の確認だけをロックする。遅いDrive読取で他の画像・保存を待たせない。
   const snapshot = locked_(function () {
-    const config = config_();
-    const selections = publicationSettings_(config).exhibitors;
-    const records = rows_(database_(config).Exhibitors);
-    const images = Object.create(null);
-    selections.forEach(function (selection) {
-      const matches = records.filter(function (record) { return record.values[0] === selection.exhibitorId; });
-      if (matches.length > 1) fail_('SCHEMA', '保存先に重複があります。運営に確認してください。');
-      const record = matches[0];
-      if (!record || record.values[1] !== config.eventId) return;
-      json_(record.values[2]).publications.forEach(function (book) {
-        (book.images || []).forEach(function (image) {
-          if (imageIds.indexOf(image.id) >= 0) images[image.id] = variant === 'thumbnail' && image.thumbnail ? image.thumbnail : image;
+    const config = config_(true);
+    const key = publicCacheKey_(config, 'imageIndex', config.properties.getProperty('HF_PUBLIC_GENERATION') || 'initial');
+    let images = timed_('catalogCache', function () { return cachedPublicJson_(key); });
+    if (!images) {
+      const selections = publicationSettings_(config).exhibitors;
+      const records = rows_(database_(config, ['Exhibitors']).Exhibitors);
+      images = Object.create(null);
+      selections.forEach(function (selection) {
+        const matches = records.filter(function (record) { return record.values[0] === selection.exhibitorId; });
+        if (matches.length > 1) fail_('SCHEMA', '保存先に重複があります。運営に確認してください。');
+        const record = matches[0];
+        if (!record || record.values[1] !== config.eventId) return;
+        json_(record.values[2]).publications.forEach(function (book) {
+          (book.images || []).forEach(function (image) { images[image.id] = image; });
         });
       });
+      // Drive ID等を含む索引はGAS内だけに保存し、API応答へ返さない。
+      keepPublicJson_(key, images, 60);
+    }
+    const selected = Object.create(null);
+    imageIds.forEach(function (id) {
+      const image = images[id];
+      if (image) selected[id] = variant === 'thumbnail' && image.thumbnail ? image.thumbnail : image;
     });
-    return { config: config, images: images };
+    return { config: config, images: selected };
   });
   let folder;
   return { images: imageIds.map(function (id) {
@@ -49,7 +64,7 @@ function publicImages_(imageIds, variant) {
       const image = snapshot.images[id];
       if (!image) fail_('NOT_FOUND', '公開画像が見つかりません。');
       if (!folder) folder = imageFolder_(snapshot.config);
-      return { contentType: image.contentType, base64: Utilities.base64Encode(storedImageBytes_(snapshot.config, image, folder)) };
+      return { contentType: image.contentType, base64: Utilities.base64Encode(storedImageBytes_(snapshot.config, image, folder, variant === 'thumbnail')) };
     }));
   }) };
 }
