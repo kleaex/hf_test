@@ -31,24 +31,29 @@
 </head>
 <body>
 <main>
-  <h1>出店者編集 <small>実験用</small></h1>
+  <h1>出店者登録・編集 <small>実験用</small></h1>
   <p>登録されたテスト宛先で本人確認し、ご自身の出店情報を編集できます。架空の出店名・頒布物を使用してください。</p>
   <div class="actions"><button id="check" type="button">接続を確認</button></div>
   <p id="result" role="status" aria-live="polite"></p>
   <p id="sessionNotice" class="note" hidden></p>
   <div class="actions"><button id="restore" type="button" hidden>ログインの復元を再試行</button></div>
   <section id="login">
-    <h2>メールでログイン</h2>
+    <h2>登録・ログイン</h2>
     <form id="emailForm">
-      <label for="email">登録済みのテスト用メールアドレス</label>
+      <label for="authMode">手続き</label>
+      <select id="authMode"><option value="login">登録済みの出店者としてログイン</option><option value="register">新しく出店者登録する</option></select>
+      <label for="loginName">出店名（必須・80文字まで）</label>
+      <input id="loginName" maxlength="80" required>
+      <label for="email">テスト用メールアドレス</label>
       <input id="email" type="email" autocomplete="email" maxlength="254" required>
+      <p class="note">新規登録も、運営が許可したテスト宛先だけで試せます。1メールアドレスにつき1出店者です。登録直後は非公開で、運営が公開対象に選ぶとカタログに掲載されます。</p>
       <div class="actions"><button id="sendCode" type="submit">確認コードを送信・再送</button></div>
     </form>
     <form id="codeForm">
       <label for="code">確認コード（6桁）</label>
       <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
       <p class="note">コードは10分間有効です。再送は60秒後から可能です。</p>
-      <div class="actions"><button class="primary" type="submit">ログイン</button></div>
+      <div class="actions"><button class="primary" type="submit">確認して編集画面へ</button></div>
     </form>
   </section>
   <section id="editor" hidden>
@@ -65,13 +70,13 @@
         <div id="books"></div>
         <button id="addBook" type="button">頒布物を追加</button>
       </fieldset>
-      <div class="actions"><button id="save" class="primary" type="submit">保存して公開</button></div>
+      <div class="actions"><button id="save" class="primary" type="submit">出店情報を保存</button></div>
     </form>
     <section id="imageConfirm" hidden>
       <h2>画像を確認して登録</h2>
       <p id="imageDetails"></p>
       <img id="imagePreview" alt="登録前の画像プレビュー">
-      <p class="note">この表示を確認して登録してください。画像は非公開の仮保存です。「保存して公開」でカタログへ反映します。</p>
+      <p class="note">この表示を確認して登録してください。画像は非公開の仮保存です。「出店情報を保存」でカタログへ反映します。</p>
       <div class="actions"><button id="uploadImage" class="primary" type="button">この画像を登録</button><button id="cancelImage" type="button">取り消す</button></div>
     </section>
     <div class="actions">
@@ -172,12 +177,12 @@ function controls() {
     node.disabled = !!closed && node.dataset.readAction !== 'true';
   }
   $('save').disabled = busy || !!preparedImage || !!closed;
-  $('save').textContent = pending ? '同じ保存を再試行・結果確認' : '保存して公開';
+  $('save').textContent = pending ? '同じ保存を再試行・結果確認' : '出店情報を保存';
   $('reload').disabled = busy;
   $('logout').disabled = busy;
   $('check').disabled = busy;
   $('restore').disabled = busy;
-  for (const node of document.querySelectorAll('#login input, #login button')) node.disabled = busy;
+  for (const node of document.querySelectorAll('#login input, #login select, #login button')) node.disabled = busy;
   $('addBook').disabled = !!closed || $('books').children.length >= 10;
   $('uploadImage').disabled = busy;
   $('cancelImage').disabled = busy || !!(preparedImage && preparedImage.committing);
@@ -268,7 +273,7 @@ function addBook(book) {
     $('imageConfirm').hidden = false; message('画像の見え方を確認して登録してください。');
   }));
   const note = document.createElement('p'); note.className = 'note';
-  note.textContent = 'JPEG・PNG・GIF・BMP、元画像20MBまで。長辺2,400px・1.5MB以内に調整します。GIFは先頭の静止画、一覧の先頭が代表画像になります。仮保存後に「保存して公開」で反映します。';
+  note.textContent = 'JPEG・PNG・GIF・BMP、元画像20MBまで。長辺2,400px・1.5MB以内に調整します。GIFは先頭の静止画、一覧の先頭が代表画像になります。仮保存後に「出店情報を保存」で反映します。';
   card.append(uploadLabel, upload, note); $('books').append(card);
 }
 function render(next) {
@@ -294,15 +299,30 @@ function request() {
 }
 $('check').addEventListener('click', () => action(async () => { await rpc('getSystemStatus'); message('GASと保存先への接続を確認できました。'); }));
 $('emailForm').addEventListener('submit', event => {
-  event.preventDefault(); action(async () => { const result = await rpc('requestLoginCode', $('email').value); $('code').value = ''; message(result.message); });
+  event.preventDefault(); action(async () => {
+    const method = $('authMode').value === 'register' ? 'requestRegistrationCode' : 'requestExhibitorLoginCode';
+    const result = await rpc(method, $('loginName').value, $('email').value);
+    $('code').value = ''; message(result.message);
+  });
 });
+for (const id of ['authMode', 'loginName', 'email']) $(id).addEventListener('input', () => { $('code').value = ''; });
 $('codeForm').addEventListener('submit', event => {
   event.preventDefault();
   if (!$('emailForm').reportValidity()) return;
   action(async () => {
-    const result = await rpc('verifyLoginCode', $('email').value, $('code').value);
+    const registering = $('authMode').value === 'register';
+    let result;
+    try {
+      result = await rpc(registering ? 'verifyRegistrationCode' : 'verifyExhibitorLoginCode', $('loginName').value, $('email').value, $('code').value);
+    } catch (error) {
+      if (registering && (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code))) {
+        throw new Error('登録結果を確認できません。同じ確認コードで再試行してください。登録済みと表示された場合は、手続きをログインに切り替え、確認コードを再送してください。');
+      }
+      throw error;
+    }
     token = result.token; rememberSession(token); $('restore').hidden = true;
-    $('code').value = ''; $('email').value = ''; render(result.data); message('ログインしました。有効期限は2時間です。');
+    $('code').value = ''; $('email').value = ''; $('loginName').value = ''; $('authMode').value = 'login';
+    render(result.data); message(registering ? '出店者登録が完了しました。現在は非公開です。出店情報を入力して保存してください。' : 'ログインしました。有効期限は2時間です。');
   });
 });
 $('fields').addEventListener('input', event => { if (!event.target || event.target.type !== 'file') dirty = true; });
@@ -371,7 +391,7 @@ $('uploadImage').addEventListener('click', () => action(async () => {
       const copy = { ...book, images }; delete copy.imageIds; return copy;
     }) };
     previewCache.set(staged.image.id, $('imagePreview').src);
-    render(next); dirty = true; message('画像を仮保存しました。「保存して公開」で反映してください。');
+    render(next); dirty = true; message('画像を仮保存しました。「出店情報を保存」で反映してください。');
     window.hfPerformance?.record('imageUpload', Date.now() - started);
   } catch (error) {
     if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) {

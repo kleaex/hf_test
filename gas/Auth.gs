@@ -36,7 +36,8 @@ function sendChallenge_(config, sheet, user, email, codePurpose) {
   values[3] = JSON.stringify(auth);
   writeRow_(sheet, user.row, values);
   try {
-    MailApp.sendEmail({ to: email, subject: codePurpose ? '【実験用】運営画面の確認コード' : '【実験用】出店者編集の確認コード',
+    MailApp.sendEmail({ to: email, subject: codePurpose && codePurpose.indexOf('registration:') === 0
+      ? '【実験用】出店者登録の確認コード' : codePurpose ? '【実験用】運営画面の確認コード' : '【実験用】出店者編集の確認コード',
       body: '確認コード: ' + code + '\n有効期限は10分、入力は5回までです。\n心当たりがなければ、このメールを破棄してください。' });
   } catch (_) {
     auth.challenge.status = 'failed';
@@ -74,6 +75,12 @@ function verifyCode_(input, code) {
   const membership = membership_(db, user.values[0]);
   const record = one_(db.Exhibitors, 0, membership.values[2]);
   if (!record || record.values[1] !== config.eventId) fail_('FORBIDDEN', '対象の開催回に出店者登録がありません。');
+  return issueSession_(config, db, user, membership, record);
+}
+
+function issueSession_(config, db, user, membership, record) {
+  const now = Date.now();
+  const email = user.values[1];
   const token = random_(config, 'session');
   const previous = one_(db.Sessions, 0, user.values[0]);
   const expiresAt = now + 7200000;

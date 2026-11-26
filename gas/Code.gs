@@ -38,6 +38,29 @@ function requestLoginCode(email) {
   return api_(function () { return locked_(function () { return requestCode_(email); }); });
 }
 
+function requestRegistrationCode(name, email) {
+  return api_(function () { return locked_(function () { return requestRegistration_(name, email); }); });
+}
+
+function verifyRegistrationCode(name, email, code) {
+  return api_(function () { return locked_(function () { return verifyRegistration_(name, email, code); }); });
+}
+
+function requestExhibitorLoginCode(name, email) {
+  return api_(function () { return locked_(function () {
+    if (!matchesExhibitor_(name, email)) return codeResponse_();
+    requestCode_(email);
+    return codeResponse_();
+  }); });
+}
+
+function verifyExhibitorLoginCode(name, email, code) {
+  return api_(function () { return locked_(function () {
+    if (!matchesExhibitor_(name, email)) fail_('INVALID_CODE', '出店名・メールアドレス・確認コードを確認してください。');
+    return verifyCode_(email, code);
+  }); });
+}
+
 function verifyLoginCode(email, code) {
   return api_(function () { return locked_(function () { return verifyCode_(email, code); }); });
 }

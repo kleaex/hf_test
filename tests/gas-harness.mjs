@@ -150,7 +150,7 @@ export function harness() {
     if (shared) metadata.permissions.push({ id: 'anyone', type: 'anyone', role: 'reader' });
     return state.metadataTransform ? state.metadataTransform(metadata) : metadata;
   } } } : undefined });
-  for (const name of ['Code', 'Store', 'Auth', 'Profile', 'Admin', 'Images', 'Publishing', 'AdminConsole', 'Transport', 'PublicCatalog', 'Performance', 'PublicCache', 'DriveMetadata']) vm.runInContext(fs.readFileSync(new URL('../gas/' + name + '.gs', import.meta.url), 'utf8'), context, { filename: name + '.gs' });
+  for (const name of ['Code', 'Store', 'Auth', 'Registration', 'Profile', 'Admin', 'Images', 'Publishing', 'AdminConsole', 'Transport', 'PublicCatalog', 'Performance', 'PublicCache', 'DriveMetadata']) vm.runInContext(fs.readFileSync(new URL('../gas/' + name + '.gs', import.meta.url), 'utf8'), context, { filename: name + '.gs' });
   const call = (name, ...args) => JSON.parse(JSON.stringify(context[name](...JSON.parse(JSON.stringify(args)))));
   const setup = () => call('setupExperiment_');
   const code = email => state.mail.findLast(mail => mail.to === email)?.body.match(/確認コード: (\d{6})/)[1];
