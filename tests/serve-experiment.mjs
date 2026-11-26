@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import { harness } from './gas-harness.mjs';
 
 const h = harness(); h.setup(); h.setupAdmin();
-h.properties.HF_TEST_EMAILS = JSON.stringify(['a@example.invalid', 'b@example.invalid', 'new@example.invalid']);
 const allowed = new Set(['getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'logout', 'uploadPublicationImage', 'getPublicationImage',
   'requestRegistrationCode', 'verifyRegistrationCode', 'requestExhibitorLoginCode', 'verifyExhibitorLoginCode',
   'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'previewAdminCatalog', 'exportAdminCatalog', 'getAdminImage', 'logoutAdmin']);

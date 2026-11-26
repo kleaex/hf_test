@@ -2,8 +2,8 @@ function requestCode_(input) {
   const config = config_();
   const db = database_(config);
   const email = email_(input);
-  const response = { message: '登録済みのテスト宛先には確認コードを送信します。届かない場合は、時間をおいて運営に確認してください。' };
-  if (!email || config.emails.indexOf(email) < 0) return response;
+  const response = { message: '登録済みのメールアドレスには確認コードを送信します。届かない場合は、時間をおいて運営に確認してください。' };
+  if (!email) return response;
   const user = one_(db.Users, 1, email);
   if (!user || !active_(user.values[2])) return response;
   membership_(db, user.values[0]);
@@ -11,7 +11,7 @@ function requestCode_(input) {
 }
 
 function sendChallenge_(config, sheet, user, email, codePurpose) {
-  const response = { message: '登録済みのテスト宛先には確認コードを送信します。届かない場合は、時間をおいて運営に確認してください。' };
+  const response = { message: '登録済みのメールアドレスには確認コードを送信します。届かない場合は、時間をおいて運営に確認してください。' };
   const now = Date.now();
   const auth = json_(user.values[3]);
   if (auth.lastSentAt && now - auth.lastSentAt < 60000) return response;
@@ -56,7 +56,7 @@ function verifyCode_(input, code) {
   const db = database_(config);
   const email = email_(input);
   const reject = function () { fail_('INVALID_CODE', 'コードを確認できません。有効期限・入力内容を確認し、必要なら再送してください。'); };
-  if (!email || config.emails.indexOf(email) < 0) return reject();
+  if (!email) return reject();
   const user = one_(db.Users, 1, email);
   if (!user || !active_(user.values[2])) return reject();
   const auth = json_(user.values[3]);
@@ -101,7 +101,7 @@ function authenticate_(token) {
   const session = sessions[0];
   if (session.values[5] || !Number.isFinite(session.values[4]) || session.values[4] <= Date.now()) return reject();
   const user = one_(db.Users, 0, session.values[0]);
-  if (!user || !active_(user.values[2]) || config.emails.indexOf(user.values[1]) < 0) return reject();
+  if (!user || !active_(user.values[2])) return reject();
   if (!equal_(session.values[7], digest_(config, 'email', user.values[1])) || session.values[8] !== config.eventId) return reject();
   const membership = membership_(db, user.values[0]);
   if (membership.values[0] !== session.values[2] || membership.values[2] !== session.values[6]) return reject();

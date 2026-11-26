@@ -1,13 +1,13 @@
 // 登録待ちは無効なUsers行だけ。メール確認後に固定IDで所属・出店情報を作る。
 function codeResponse_() {
-  return { message: '入力内容と実験用の宛先設定を確認できた場合は、確認コードを送信します。届かない場合は、入力内容・登録済みかどうかを確認し、時間をおいて再試行してください。' };
+  return { message: '入力内容を確認できた場合は、確認コードを送信します。届かない場合は、入力内容・登録済みかどうかを確認し、時間をおいて再試行してください。' };
 }
 
 function matchesExhibitor_(name, input) {
   const config = config_();
   const email = email_(input);
   const normalized = text_(name, 80, true);
-  if (!email || config.emails.indexOf(email) < 0) return false;
+  if (!email) return false;
   const db = database_(config);
   const user = one_(db.Users, 1, email);
   if (!user || !active_(user.values[2])) return false;
@@ -26,7 +26,7 @@ function requestRegistration_(name, input) {
   const normalized = text_(name, 80, true);
   const email = email_(input);
   const response = codeResponse_();
-  if (!email || config.emails.indexOf(email) < 0) return response;
+  if (!email) return response;
   const db = database_(config);
   let user = one_(db.Users, 1, email);
   if (user && active_(user.values[2])) return response;
@@ -34,6 +34,10 @@ function requestRegistration_(name, input) {
   // 利用停止された既存アカウントは新規登録で復活させない。
   if (user && (!auth.registration || auth.registration.eventId !== config.eventId)) return response;
   if (auth.lastSentAt && Date.now() - auth.lastSentAt < 60000) return response;
+  // 宛先数に上限を設けないため、全体の送信枠がなければ登録待ち行も増やさない。
+  const budget = json_(config.properties.getProperty('HF_MAIL_BUDGET') || '{}');
+  if ((budget.windowStart && Date.now() - budget.windowStart < 3600000 && budget.count >= 20)
+      || MailApp.getRemainingDailyQuota() < 1) return response;
   const registration = auth.registration || {
     eventId: config.eventId,
     exhibitorId: 'exh_' + random_(config, 'exhibitor').slice(0, 32),
@@ -57,7 +61,7 @@ function verifyRegistration_(name, input, code) {
   const normalized = text_(name, 80, true);
   const email = email_(input);
   const reject = function () { fail_('INVALID_CODE', '出店名・メールアドレス・コード・有効期限を確認してください。登録済みの場合はログインしてください。'); };
-  if (!email || config.emails.indexOf(email) < 0) return reject();
+  if (!email) return reject();
   const db = database_(config);
   const user = one_(db.Users, 1, email);
   if (!user || active_(user.values[2])) return reject();

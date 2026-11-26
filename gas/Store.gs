@@ -24,11 +24,12 @@ function config_(deferEvent) {
   const properties = PropertiesService.getScriptProperties();
   const values = properties.getProperties();
   let emails;
-  try { emails = JSON.parse(values.HF_TEST_EMAILS || 'null'); } catch (_) { emails = null; }
+  // 旧手入力の初期登録にだけ使う。OTPによる新規登録・ログインの許可リストではない。
+  try { emails = JSON.parse(values.HF_TEST_EMAILS || '[]'); } catch (_) { emails = null; }
   if (values.HF_ENV !== 'experiment' || !/^[A-Za-z0-9_-]{20,}$/.test(values.HF_SPREADSHEET_ID || '')
       || !/^[A-Za-z0-9_-]{1,64}$/.test(values.HF_EVENT_ID || '')
       || !/^[A-Za-z0-9+/=_-]{43,}$/.test(values.HF_AUTH_SECRET || '')
-      || !Array.isArray(emails) || emails.length < 1 || emails.length > 10
+      || !Array.isArray(emails) || emails.length > 10
       || emails.some(function (email) { return !email_(email); })) {
     fail_('NOT_CONFIGURED', '実験環境の設定が完了していません。運営に確認してください。');
   }

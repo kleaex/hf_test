@@ -8,7 +8,7 @@ function ready() { const h = harness(); h.setup(); return h; }
 function error(result, code) { assert.equal(result.ok, false); assert.equal(result.error.code, code); }
 
 test('設定不足・異なる環境・Sheets障害は保存を拒否し、内部情報を返さない', () => {
-  for (const [key, value] of [['HF_ENV', 'production'], ['HF_AUTH_SECRET', 'short'], ['HF_TEST_EMAILS', '[]'], ['HF_SPREADSHEET_ID', 'other_spreadsheet_id_123456']]) {
+  for (const [key, value] of [['HF_ENV', 'production'], ['HF_AUTH_SECRET', 'short'], ['HF_TEST_EMAILS', 'invalid json'], ['HF_SPREADSHEET_ID', 'other_spreadsheet_id_123456']]) {
     const h = ready(); const a = h.login(); h.properties[key] = value;
     const result = h.call('saveProfile', a.token, saveRequest(a.data));
     error(result, key === 'HF_SPREADSHEET_ID' ? 'UNAVAILABLE' : 'NOT_CONFIGURED');
@@ -25,7 +25,7 @@ test('初期設定の再実行は既存データを保持し、不整合なス�
   assert.throws(() => h.setup()); assert.equal(h.sheets.get('Users').data[0][0], 'wrong');
 });
 
-test('未登録・許可外・無効メールには送信せず登録有無を応答から示さない', () => {
+test('ログイン時は未登録・無効メールには送信せず登録有無を応答から示さない', () => {
   const h = ready(); const response = h.call('requestLoginCode', 'a@example.invalid');
   for (const input of ['unknown@example.invalid', 'broken', '=formula@example.invalid', null]) {
     assert.deepEqual(h.call('requestLoginCode', input), response);
@@ -118,14 +118,13 @@ test('不正・失効・期限切れ・再ログイン前のセッションを�
   error(h.call('getMyProfile', last.token), 'UNAUTHENTICATED');
 });
 
-test('利用停止・所属解除・所属変更・許可宛先除外・秘密値変更が既存セッションに効く', () => {
+test('利用停止・所属解除・所属変更・宛先変更・秘密値変更が既存セッションに効く', () => {
   for (const mutate of [
     h => { h.sheets.get('Users').data[1][2] = false; },
     h => { h.sheets.get('Memberships').data[1][3] = false; },
     h => { h.sheets.get('Memberships').data[1][0] = 'mem_changed'; },
     h => { h.sheets.get('Memberships').data[1][2] = 'exh_b'; },
     h => { h.sheets.get('Users').data[1][1] = 'b@example.invalid'; },
-    h => { h.properties.HF_TEST_EMAILS = '["b@example.invalid"]'; },
     h => { h.properties.HF_AUTH_SECRET = 'rotated-local-only-secret-value-12345678901234567890'; }
   ]) {
     const h = ready(); const a = h.login(); mutate(h);

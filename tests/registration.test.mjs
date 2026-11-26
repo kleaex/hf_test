@@ -7,7 +7,8 @@ const email = 'new@example.invalid';
 const name = '架空の新規出店';
 function ready() {
   const h = harness(); h.setup(); h.setupAdmin();
-  h.properties.HF_TEST_EMAILS = JSON.stringify(['a@example.invalid', 'b@example.invalid', email]);
+  // 許可リストにない宛先で登録から再ログインまで確認する。
+  delete h.properties.HF_TEST_EMAILS;
   return h;
 }
 function request(h) { return h.call('requestRegistrationCode', name, email); }
@@ -35,11 +36,11 @@ test('メール確認後に固定IDで登録・ログインし、保存しても
   assert.equal(h.call('verifyExhibitorLoginCode', name, email, h.code(email)).ok, false);
 });
 
-test('許可外・既存・停止済み宛先の新規登録では既存情報を書き換えない', () => {
+test('既存・停止済み宛先の新規登録では既存情報を書き換えない', () => {
   const h = ready();
   const before = structuredClone(h.sheets.get('Users').data);
   const response = request(h);
-  for (const target of ['other@example.invalid', 'a@example.invalid', 'invalid']) {
+  for (const target of ['a@example.invalid', 'invalid']) {
     assert.deepEqual(h.call('requestRegistrationCode', name, target), response);
   }
   assert.deepEqual(h.sheets.get('Users').data.slice(0, 3), before);
@@ -63,12 +64,33 @@ test('登録コードは名前・宛先・開催回・期限に結び付け、5�
     h => h.call('verifyRegistrationCode', name, 'a@example.invalid', h.code(email)),
     h => { h.tick(600000); return verify(h); },
     h => { h.properties.HF_EVENT_ID = 'other_event'; return verify(h); },
-    h => { for (let i = 0; i < 5; i++) verify(h, 'xxxxxx'); return verify(h); },
-    h => { h.properties.HF_TEST_EMAILS = '["a@example.invalid"]'; return verify(h); }
+    h => { for (let i = 0; i < 5; i++) verify(h, 'xxxxxx'); return verify(h); }
   ]) {
     const h = ready(); request(h); assert.equal(mutate(h).ok, false);
     assert.equal(h.sheets.get('Exhibitors').data.length, 3);
   }
+});
+
+test('任意の宛先でも全体送信枠を越えず、枠不足時は登録待ち行も増やさない', () => {
+  const h = ready();
+  for (let i = 0; i < 25; i++) h.call('requestRegistrationCode', name, `person${i}@example.invalid`);
+  assert.equal(h.state.mail.length, 20);
+  assert.equal(h.sheets.get('Users').data.length, 23);
+  assert.equal(h.sheets.get('Exhibitors').data.length, 3);
+  h.tick(3600000);
+  h.call('requestRegistrationCode', name, 'person24@example.invalid');
+  assert.equal(h.state.mail.length, 21);
+  const unavailable = ready(); unavailable.state.quota = 0; request(unavailable);
+  assert.equal(unavailable.sheets.get('Users').data.length, 3);
+});
+
+test('旧許可リストの変更ではOTP登録者のセッション・再ログインを妨げない', () => {
+  const h = ready(); h.properties.HF_TEST_EMAILS = '[]'; request(h);
+  const result = verify(h); assert.equal(result.ok, true);
+  h.properties.HF_TEST_EMAILS = '["other@example.invalid"]';
+  assert.equal(h.call('getMyProfile', result.token).ok, true);
+  h.tick(60001); h.call('requestExhibitorLoginCode', name, email);
+  assert.equal(h.call('verifyExhibitorLoginCode', name, email, h.code(email)).ok, true);
 });
 
 test('再送制限・メール障害・締切・入力検証を適用する', () => {
