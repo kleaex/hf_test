@@ -45,6 +45,7 @@ export function clientHarness(backend, storage = new Map(), options = {}) {
     } }); return runner;
   } } };
   const window = { google, addEventListener() {} };
+  if (options.performance) window.hfPerformance = options.performance;
   window.hfRpc = async (name, ...args) => {
     calls.push({ name, args }); const result = await backend(name, ...args);
     if (!result.ok) throw result.error; return result;

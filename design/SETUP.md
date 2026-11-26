@@ -1,5 +1,75 @@
 # 実験環境の設定
 
+## 画像表示・画像登録を計測する（今回）
+
+カタログの追加高速化はいったん区切る。画像の実測に必要なブラウザー側の記録を追加した。
+今回はGASのプログラム・接続設定・共有状態を変更しない。
+
+| 配置先 | 置換するファイル |
+| --- | --- |
+| GitHub Pages | docs/rpc.js、docs/app.js、docs/exhibitor/index.html |
+
+HPの3ファイルを配信してから対象ページを再読み込みする。GASの再デプロイは不要。
+HF_PERFORMANCEは `true` のまま使う。接続URLやScript Propertiesを追加変更する必要はない。
+
+### 公開画像の取得・復号を比較する
+
+公開カタログのページで、Consoleに次を入力する。
+
+```js
+JSON.stringify(await hfPerformance.measureImages(), null, 2)
+```
+
+公開中の最初の画像1点について、一覧用・拡大用を順に2回ずつ読み、ブラウザーで復号する。
+カタログ取得1回と画像取得4回だけで、プロフィール・画像の保存・削除・共有変更は行わない。
+結果は画像内容・ファイル名・画像ID・Drive URL・メール・認証トークンを含まない。
+
+- imagesFoundが0なら公開対象に画像がない。通常の編集・運営画面で公開画像を用意してから確認する。
+- 各measurementのdetails.passが1回目／2回目、variantがthumbnail／fullを示す。
+- bytesは受信した画像バイト数。rpcMsは画像要求の往復、unpackMsはBase64からBlobへ展開する時間、decodeMsはブラウザーで復号する時間。
+- serverMsとstagesは既存のGAS計測。driveMetadata、driveRead、sharedImageCache等からサーバー内の待ちを区別する。
+- このコマンドはブラウザー内の画像保存を経由せずGASを呼ぶ。既存の画像キャッシュは削除しない。GAS側の共有キャッシュは利用され得る。
+- 1回目でもGAS側が既に温まっている場合がある。pass=1をキャッシュなしと断定しない。
+- 画面外の画像要素で復号を測るため、スクロール・一覧の待機列・実際の描画完了までの時間は含まない。
+- 画像の復号に対応しないブラウザーや取得失敗時は、成功値を作らずエラーにする。
+
+### 通常表示とブラウザー内キャッシュを調べる
+
+通常どおり一覧をスクロールし、画像を押して拡大した後に次を実行する。
+
+```js
+JSON.stringify(hfPerformance.snapshot(), null, 2)
+```
+
+| operation・details | 意味 |
+| --- | --- |
+| imageLoad / source=memory | 同じページ内で取得済みの画像を再利用 |
+| imageLoad / source=inflight | 既に進行中の同じ画像要求の結果を待った |
+| imageLoad / source=browser | 前回までのブラウザー保存画像を再利用 |
+| imageLoad / source=gas | GASへ要求して取得。時間には待機列も含む |
+| imageQueue | 同時実行枠が空くまで待った時間 |
+| imageUnpack | 画像のBase64をブラウザー内でBlobへ展開した時間 |
+| imageReady | 画像取得開始または拡大クリックから復号完了まで。画面切替・拡大を閉じた後の完了は除外 |
+
+imageReadyは画像を表示可能になった時点で、ブラウザーの描画完了を厳密に測るものではない。
+画像がブラウザー内から表示された場合も記録が残るので、GASの画像要求がないことを「画像未表示」と判断しない。
+計測値の区間は入れ子になるため足し合わせない。
+
+### 登録を測る
+
+1. HPの出店者画面でログインした後、Consoleで `hfPerformance.clear()` を実行する。
+2. 実験用の作品で画像を1点選択し、プレビューを確認して仮保存する。その後、必要な最終保存を行う。
+3. `JSON.stringify(hfPerformance.snapshot(), null, 2)` の結果を確認する。
+
+imagePrepareは選択画像の読込・調整・小画像作成の時間。detailsには元画像sourceBytes、調整後bytes、小画像thumbnailBytes、主画像の圧縮試行回数encodesを記録する。
+stagePublicationImageはGASへの画像登録要求。imageValidate／thumbnailValidate／driveSave／imageCommit等はサーバー内の区間。
+imageUploadは「この画像を登録」を押してから仮保存成功・作品欄の再構築まで。画像選択後に利用者が確認している時間は含めない。
+imageUploadにはピクセルの復号・描画完了は含めず、結果未確認・失敗時は成功として記録しない。
+
+まず取得元・容量・往復時間・サーバーの各区間を比較して、次の最適化対象を選ぶ。
+今回は計測の整備であり、実GAS・実ブラウザーでの画像速度が改善したという測定結果ではない。
+参考: [画像のdecode()](https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement/decode)。
+
 ## カタログの共有キャッシュ診断を反映する（今回の追加修正）
 
 60秒以内の再表示でもcatalogBuildが残る場合の切り分けと、小さいカタログの保存処理の簡素化を追加した。

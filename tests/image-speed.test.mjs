@@ -28,7 +28,7 @@ test('公開画像3枚を1回のSheets一覧読取で選別し、Drive読取中�
 
 const app = fs.readFileSync(new URL('../docs/app.js', import.meta.url), 'utf8').replace(/^import .*;$/m, '').replace(/load\(\);\s*$/, '');
 function imageClient(storage = new Map(), options = {}) {
-  const calls = [];
+  const calls = [], measurements = [];
   const caches = { open: async name => {
     if (options.blocked) throw Error('storage disabled');
     if (!storage.has(name)) storage.set(name, new Map()); const entries = storage.get(name);
@@ -40,7 +40,8 @@ function imageClient(storage = new Map(), options = {}) {
   const context = vm.createContext({ Blob, Uint8Array, atob, Response, URL: ImageURL,
     location: { href: 'https://example.invalid/hf_test/' },
     document: { getElementById: element, createElement: element, body: element() },
-    window: { caches, HF_CONNECTION: { gasUrl: options.source || 'https://script.google.com/macros/s/source/exec' }, addEventListener() {},
+    window: { caches, hfPerformance: { record: (operation, elapsedMs, server, details) => measurements.push({ operation, elapsedMs, details }) },
+      HF_CONNECTION: { gasUrl: options.source || 'https://script.google.com/macros/s/source/exec' }, addEventListener() {},
       hfRpc: async (name, ...args) => {
         calls.push({ name, args });
         const image = { ok: true, contentType: 'image/png', base64: png };
@@ -48,7 +49,7 @@ function imageClient(storage = new Map(), options = {}) {
       } }
   });
   vm.runInContext(app, context);
-  return { context, calls, data: (id, variant = 'thumbnail') => context.imageData(id, variant),
+  return { context, calls, measurements, data: (id, variant = 'thumbnail') => context.imageData(id, variant),
     written: () => vm.runInContext('cacheWrites', context) };
 }
 test('一覧画像3枚をまとめて取得し、同じ画像の重複取得を抑える', async () => {
@@ -56,11 +57,15 @@ test('一覧画像3枚をまとめて取得し、同じ画像の重複取得を�
   await Promise.all([...ids, ids[0]].map(id => client.data(id)));
   assert.equal(client.calls.length, 1); assert.equal(client.calls[0].name, 'getPublicImages');
   assert.deepEqual(Array.from(client.calls[0].args[0]), ids);
+  assert.ok(client.measurements.some(entry => entry.operation === 'imageQueue'));
+  assert.ok(client.measurements.some(entry => entry.operation === 'imageLoad' && entry.details.source === 'gas' && entry.details.bytes > 0));
+  await client.data(ids[0]); assert.equal(client.measurements.at(-1).details.source, 'memory');
 });
 test('再読み込み後は保存画像を再利用し、保存不可・期限切れ・別接続先では通常取得する', async () => {
   const storage = new Map(), id = 'img_' + 'a'.repeat(32);
   const first = imageClient(storage); await first.data(id); await first.written();
   const reload = imageClient(storage); await reload.data(id); assert.equal(reload.calls.length, 0);
+  assert.equal(reload.measurements.at(-1).details.source, 'browser');
   const full = imageClient(storage); await full.data(id, 'full'); assert.equal(full.calls[0].name, 'getPublicImage');
   const other = imageClient(storage, { source: 'https://script.google.com/macros/s/another/exec' }); await other.data(id); assert.equal(other.calls.length, 1);
   const blocked = imageClient(new Map(), { blocked: true }); await blocked.data(id); assert.equal(blocked.calls.length, 1);
@@ -96,4 +101,16 @@ test('最初の代表画像2枚は他画像と分け、クリックした拡大�
   finish.shift()(); await new Promise(resolve => setImmediate(resolve)); assert.equal(calls[3].name, 'getPublicImage');
   while (finish.length) { finish.shift()(); await new Promise(resolve => setImmediate(resolve)); }
   await Promise.all([...pending, full]);
+});
+
+test('拡大を閉じた後・画像を差し替えた後の復号を表示準備完了として記録しない', async () => {
+  const client = imageClient(); let finish;
+  const img = { src: 'blob:old', decode: () => new Promise(resolve => { finish = resolve; }) };
+  client.context.recordImageReady(img, 'blob:old', Date.now(), 'full', () => false);
+  finish(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(client.measurements.length, 0);
+  client.context.recordImageReady(img, 'blob:old', Date.now(), 'full', () => true); img.src = 'blob:new';
+  finish(); await new Promise(resolve => setImmediate(resolve)); assert.equal(client.measurements.length, 0);
+  client.context.recordImageReady(img, 'blob:new', Date.now(), 'full', () => true);
+  finish(); await new Promise(resolve => setImmediate(resolve)); assert.equal(client.measurements[0].operation, 'imageReady');
 });

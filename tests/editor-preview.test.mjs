@@ -24,8 +24,9 @@ test('編集画面を再表示すると本人用の小画像を自動取得し�
 });
 
 test('JPEG入力ではPNG圧縮を試さず、小画像のCanvasを長辺240pxにする', async () => {
-  const encodes = [], sizes = [];
+  const encodes = [], sizes = [], measurements = [];
   const client = clientHarness(() => ({ ok: true }), new Map(), { hpRole: 'exhibitor',
+    performance: { record: (...args) => measurements.push(args) },
     createImageBitmap: async () => ({ width: 1200, height: 800, close() {} }),
     canvas: () => {
       const canvas = { getContext: () => ({ drawImage() {}, fillRect() {} }), toBlob: (callback, type) => {
@@ -36,4 +37,7 @@ test('JPEG入力ではPNG圧縮を試さず、小画像のCanvasを長辺240px�
   const result = await client.invoke('prepareImage', new Blob([Buffer.from(jpeg, 'base64')], { type: 'image/jpeg' }));
   assert.deepEqual(encodes, ['image/jpeg', 'image/jpeg']); assert.deepEqual(sizes, [[1200, 800], [240, 160]]);
   assert.ok(result.thumbnail.base64.length < 40000);
+  const measured = measurements.find(entry => entry[0] === 'imagePrepare');
+  assert.equal(measured[3].sourceBytes, Buffer.from(jpeg, 'base64').length); assert.equal(measured[3].encodes, 1);
+  assert.equal(measured[3].thumbnailBytes, Buffer.from(jpeg, 'base64').length);
 });

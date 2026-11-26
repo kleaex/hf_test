@@ -3,19 +3,28 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
+import { png } from './image-fixtures.mjs';
 
 const source = fs.readFileSync(new URL('../docs/rpc.js', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
-function client() {
-  const handlers = new Set(), timers = new Map(), frames = [], sent = [];
+function client(options = {}) {
+  const handlers = new Set(), timers = new Map(), frames = [], sent = [], images = [], revoked = [];
   let count = 0;
   const peer = { length: 0, postMessage: (...args) => sent.push(args) };
   const root = { length: 1, 0: peer };
   const window = { HF_CONNECTION: { gasUrl: 'https://script.google.com/macros/s/TEST_DEPLOYMENT/exec' },
     addEventListener: (name, handler) => handlers.add(handler), removeEventListener: (name, handler) => handlers.delete(handler) };
-  const context = vm.createContext({ window, crypto, URL, URLSearchParams, Uint8Array,
+  class TestURL extends URL { static createObjectURL() { return 'blob:test-image'; } static revokeObjectURL(url) { revoked.push(url); } }
+  const context = vm.createContext({ window, crypto, URL: TestURL, URLSearchParams, Uint8Array, Blob, atob,
     location: { href: 'https://example.invalid/hf_test/exhibitor/', origin: 'https://example.invalid' },
-    document: { body: { append: frame => frames.push(frame) }, createElement: () => ({ contentWindow: root, addEventListener() {}, remove() {} }) },
+    document: { body: { append: frame => frames.push(frame) }, createElement: tag => {
+      if (tag === 'img') {
+        const img = { decode: options.decode === false ? undefined : async () => { if (options.decodeError) throw Error('decode failed'); },
+          removeAttribute(name) { delete this[name]; } };
+        images.push(img); return img;
+      }
+      return { contentWindow: root, addEventListener() {}, remove() {} };
+    } },
     setTimeout: (callback, ms) => { const id = ++count; timers.set(id, { callback, ms }); return id; }, clearTimeout: id => timers.delete(id) });
   vm.runInContext(source, context);
   const message = (data, origin = 'https://n-test-0lu-script.googleusercontent.com', sender = peer) => {
@@ -23,7 +32,7 @@ function client() {
   };
   const ready = () => { const nonce = new URL(frames.at(-1).src).searchParams.get('nonce'); message({ channel: 'hf-rpc-v1', nonce, ready: true }); return nonce; };
   const tick = ms => { for (const [id, timer] of [...timers]) if (timer.ms === ms) { timers.delete(id); timer.callback(); } };
-  return { window, frames, handlers, timers, sent, message, ready, tick, peer, root };
+  return { window, frames, handlers, timers, sent, message, ready, tick, peer, root, images, revoked };
 }
 test('二重iframeのready・RPC応答を照合し、別窓・別origin・別nonce・未知の要求IDを拒否', async () => {
   const c = client(); let completed = false;
@@ -91,4 +100,46 @@ test('GAS bridgeページはScript Propertiesのoriginとnonceを検証してか
   context.bridgePage_({ origin: 'https://example.invalid', nonce: '</script>' }); assert.equal(allowed, false);
   context.bridgePage_({ origin: 'https://example.invalid', nonce: 'a'.repeat(64) }); assert.equal(allowed, true);
   assert.equal(JSON.parse(template.settings).origin, 'https://example.invalid');
+});
+
+test('画像計測は公開画像1点の大小を各2回だけ読み、画像・ID・任意の診断項目を返さない', async () => {
+  const c = client(), calls = [], id = 'img_' + 'a'.repeat(32);
+  c.window.hfRpc = async (name, ...args) => {
+    calls.push({ name, args });
+    if (name === 'getPublicCatalog') return { data: { exhibitors: [{ name: 'PRIVATE_NAME', publications: [{ images: [{ id }] }] }] } };
+    const image = { ok: true, id, contentType: 'image/png', base64: png };
+    return { ...(name === 'getPublicImages' ? { images: [image] } : image),
+      performance: { totalMs: 1, stages: { driveRead: { ms: 1, count: 1 }, PRIVATE_STAGE: { ms: 3, count: 1 } }, cache: { jsonHit: 1, PRIVATE_KEY: 1 } } };
+  };
+  const report = await c.window.hfPerformance.measureImages();
+  assert.equal(report.imagesFound, 1); assert.equal(report.measurements.length, 4);
+  assert.deepEqual(calls.map(call => call.name), ['getPublicCatalog', 'getPublicImages', 'getPublicImage', 'getPublicImages', 'getPublicImage']);
+  assert.deepEqual(Array.from(report.measurements, entry => entry.details.variant), ['thumbnail', 'full', 'thumbnail', 'full']);
+  assert.deepEqual(Array.from(report.measurements, entry => entry.details.pass), [1, 1, 2, 2]);
+  assert.ok(report.measurements.every(entry => entry.details.bytes === Buffer.from(png, 'base64').length));
+  assert.doesNotMatch(JSON.stringify(report), /PRIVATE_|img_|base64|blob:|fileId|example/);
+  assert.equal(c.revoked.length, 4); assert.ok(c.images.every(img => img.src === undefined));
+});
+
+test('公開画像がない場合や復号失敗を正常計測として報告せず、作成URLは解放する', async () => {
+  const c = client(), id = 'img_' + 'b'.repeat(32);
+  c.window.hfRpc = async () => ({ data: { exhibitors: [] } });
+  assert.equal((await c.window.hfPerformance.measureImages()).imagesFound, 0);
+  for (const options of [{ decode: false }, { decodeError: true }]) {
+    const probe = client(options);
+    probe.window.hfRpc = async name => name === 'getPublicCatalog'
+      ? { data: { exhibitors: [{ publications: [{ images: [{ id }] }] }] } }
+      : { images: [{ ok: true, id, contentType: 'image/png', base64: png }] };
+    await assert.rejects(probe.window.hfPerformance.measureImages());
+    assert.equal(probe.revoked.length, 1);
+    assert.equal(probe.window.hfPerformance.snapshot().filter(entry => entry.operation === 'imageProbe').length, 0);
+  }
+});
+
+test('画像診断は許可した容量・時間・取得元だけを記録する', () => {
+  const c = client();
+  c.window.hfPerformance.record('imagePrepare', 10, null, { bytes: 200, sourceBytes: 400, thumbnailBytes: 50,
+    encodes: 1, source: 'gas', variant: 'thumbnail', fileName: 'PRIVATE_FILE', id: 'img_private', token: 'PRIVATE_TOKEN' });
+  const result = c.window.hfPerformance.snapshot()[0]; assert.equal(result.details.bytes, 200); assert.equal(result.details.source, 'gas');
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|img_|fileName|token/);
 });

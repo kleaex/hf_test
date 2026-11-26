@@ -7,6 +7,7 @@ const search = document.getElementById('search');
 const genre = document.getElementById('genre');
 let exhibitors = [];
 const imageCache = new Map();
+const readyImages = new Set();
 const imageQueue = [];
 let activeImages = 0;
 let initialPreviews = 0;
@@ -22,15 +23,24 @@ lightbox.addEventListener('close', () => { openedImage++; fullImage.removeAttrib
 
 function imageData(id, variant, representative = false) {
   const key = id + ':' + variant;
-  if (imageCache.has(key)) return imageCache.get(key);
+  const started = Date.now();
+  if (imageCache.has(key)) {
+    const source = readyImages.has(key) ? 'memory' : 'inflight';
+    return imageCache.get(key).then(url => {
+      window.hfPerformance?.record('imageLoad', Date.now() - started, null, { variant, source }); return url;
+    });
+  }
+  const details = { variant, source: 'gas' };
   const promise = (async () => {
     const cached = await cachedImage(id, variant);
-    if (cached) return URL.createObjectURL(cached);
+    if (cached) { details.source = 'browser'; details.bytes = cached.size; return URL.createObjectURL(cached); }
     return new Promise((resolve, reject) => {
-      imageQueue.push({ id, variant, resolve, reject, priority: representative && initialPreviews++ < 2 });
+      imageQueue.push({ id, variant, resolve, reject, details, queuedAt: Date.now(), priority: representative && initialPreviews++ < 2 });
       Promise.resolve().then(drainImages);
     });
-  })();
+  })().then(url => {
+    readyImages.add(key); window.hfPerformance?.record('imageLoad', Date.now() - started, null, details); return url;
+  });
   imageCache.set(key, promise);
   promise.catch(() => imageCache.delete(key));
   return promise;
@@ -66,11 +76,14 @@ function keepImage(id, variant, blob) {
   }).catch(() => {});
 }
 function decodedImage(result, task) {
+  const started = Date.now();
   if (!result || result.ok === false) throw result?.error || new Error('画像を取得できません。');
   if (!['image/jpeg', 'image/png'].includes(result.contentType) || typeof result.base64 !== 'string'
       || result.base64.length > 2000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(result.base64)) throw new Error('画像の形式が不正です。');
   const binary = atob(result.base64);
   const blob = new Blob([Uint8Array.from(binary, char => char.charCodeAt(0))], { type: result.contentType });
+  task.details.bytes = blob.size;
+  window.hfPerformance?.record('imageUnpack', Date.now() - started, null, { variant: task.variant, bytes: blob.size });
   keepImage(task.id, task.variant, blob);
   return URL.createObjectURL(blob);
 }
@@ -80,6 +93,7 @@ function drainImages() {
     const full = imageQueue.findIndex(task => task.variant === 'full');
     const priority = imageQueue.findIndex(task => task.priority);
     const tasks = full >= 0 ? imageQueue.splice(full, 1) : priority >= 0 ? imageQueue.splice(priority, 1) : imageQueue.splice(0, 3);
+    for (const task of tasks) window.hfPerformance?.record('imageQueue', Date.now() - task.queuedAt, null, { variant: task.variant });
     activeImages++;
     (async () => {
       const result = tasks[0].variant === 'full'
@@ -100,7 +114,15 @@ const imageObserver = typeof IntersectionObserver === 'function' ? new Intersect
 window.addEventListener('pagehide', () => {
   for (const promise of imageCache.values()) promise.then(url => URL.revokeObjectURL(url), () => {});
   imageCache.clear();
+  readyImages.clear();
 });
+
+function recordImageReady(img, src, started, variant, current) {
+  if (typeof img.decode !== 'function') return;
+  img.decode().then(() => {
+    if (current() && img.src === src) window.hfPerformance?.record('imageReady', Date.now() - started, null, { variant });
+  }).catch(() => {}); // 画面切替・閉じる・読込失敗は表示完了として記録しない。
+}
 
 function element(tag, value, className) {
   const node = document.createElement(tag);
@@ -116,14 +138,22 @@ function imageLink(image, title, index) {
     const img = element('img'); img.alt = title + 'の画像' + (index + 1); img.width = image.width; img.height = image.height; img.decoding = 'async';
     link.append(img);
     link.loadPreview = async () => {
-      try { img.src = await imageData(image.id, 'thumbnail', index === 0); }
+      const started = Date.now();
+      try {
+        const src = await imageData(image.id, 'thumbnail', index === 0); img.src = src;
+        recordImageReady(img, src, started, 'thumbnail', () => img.isConnected !== false);
+      }
       catch (_) { link.replaceChildren(element('span', '画像の取得を再試行')); }
     };
     link.addEventListener('click', async () => {
+      const started = Date.now();
       const request = ++openedImage; imageMessage.textContent = '画像を読み込んでいます。'; fullImage.removeAttribute('src'); fullImage.alt = img.alt;
       if (img.src) { fullImage.src = img.src; imageMessage.textContent = '高画質の画像を読み込んでいます。'; }
       if (!lightbox.open) lightbox.showModal();
-      try { const url = await imageData(image.id, 'full'); if (request === openedImage) { fullImage.src = url; imageMessage.textContent = ''; } }
+      try { const url = await imageData(image.id, 'full'); if (request === openedImage) {
+        fullImage.src = url; imageMessage.textContent = '';
+        recordImageReady(fullImage, url, started, 'full', () => request === openedImage && lightbox.open);
+      } }
       catch (_) { if (request === openedImage) imageMessage.textContent = '画像を読み込めませんでした。閉じて再試行してください。'; }
     });
     if (imageObserver) imageObserver.observe(link); else link.loadPreview();
