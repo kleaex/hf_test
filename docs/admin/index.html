@@ -47,6 +47,7 @@
         <div class="actions"><button id="save" class="primary" type="submit">設定を保存</button></div>
       </form>
     </section>
+    <section><h2>公開データ</h2><p class="note">初回の有効化・公開反映の復旧・シートを直接編集した後に使います。有効化後は保存時に自動更新します。未保存の入力は反映されません。</p><button id="rebuildCatalog" type="button">公開データを再生成</button></section>
     <p><a href="../">公開カタログを確認</a></p>
   </div>
 </main>
@@ -74,6 +75,7 @@ function controls() {
   $('save').disabled = busy;
   $('save').textContent = pendingSave ? '同じ設定保存を再試行・結果確認' : '設定を保存';
   for (const id of ['reload', 'logout', 'restore']) $(id).disabled = busy;
+  $('rebuildCatalog').disabled = busy || pending || dirty;
   for (const element of document.querySelectorAll('#login input, #login button')) element.disabled = busy;
 }
 async function rpc(name, ...args) {
@@ -144,11 +146,17 @@ $('eventForm').addEventListener('submit', event => {
     controls();
     try { const result = await rpc('saveAdminEvent', token, pendingSave); render(result.data); message(result.replayed ? '設定が保存済みであることを確認しました。' : '設定を保存しました。カタログの次回読み込み時に反映されます。'); }
     catch (error) {
-      if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) message('保存結果が未確認です。同じ設定保存を再試行してください。');
+      if (error.code === 'PUBLICATION_PENDING') message(error.message);
+      else if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) message('保存結果が未確認です。同じ設定保存を再試行してください。');
       else { pendingSave = null; message(error.message); }
     }
   });
 });
+$('rebuildCatalog').addEventListener('click', () => action(async () => {
+  message('保存済みの内容から公開データを作成しています。');
+  await rpc('rebuildPublicCatalog', token);
+  message('公開データを更新しました。カタログの次回読み込み時に反映されます。');
+}));
 $('reload').addEventListener('click', () => {
   if ((dirty || pendingSave) && !confirm('未保存の入力を破棄して保存済み設定を読み直しますか？')) return;
   action(async () => { const result = await rpc('getAdminDashboard', token); render(result.data); message('保存済み設定を読み込みました。'); });

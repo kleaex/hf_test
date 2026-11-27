@@ -5,9 +5,9 @@
   const labels = new Set(['bridge', 'catalogDirect', 'catalogDirectFallback', 'catalogInitial', 'catalogFallback', 'catalogLoad', 'catalogTextReady', 'imagePrepare', 'imageUpload', 'imageProbe', 'imageLoad', 'imageQueue', 'imageUnpack', 'imageReady', 'imageCache', 'catalogPaint', 'getPublicCatalog', 'getPublicImage', 'getPublicImages',
     'getSystemStatus', 'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'stagePublicationImage', 'getPublicationImage', 'logout',
     'requestRegistrationCode', 'verifyRegistrationCode', 'requestExhibitorLoginCode', 'verifyExhibitorLoginCode',
-    'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'getAdminImage', 'logoutAdmin']);
+    'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'rebuildPublicCatalog', 'getAdminImage', 'logoutAdmin']);
   const stages = new Set(['lockWait', 'lockHeld', 'sheetHeader', 'sheetRead', 'sheetWrite', 'catalogBuild', 'catalogCache',
-    'imageValidate', 'thumbnailValidate', 'driveSave', 'driveRead', 'driveMetadata', 'driveMetadataApi', 'driveMetadataLegacy', 'imageIndexSeed', 'catalogPreview', 'imageAuthorize', 'imageCommit', 'sharedImageCache', 'cacheWrite']);
+    'imageValidate', 'thumbnailValidate', 'driveSave', 'driveRead', 'driveMetadata', 'driveMetadataApi', 'driveMetadataLegacy', 'imageIndexSeed', 'catalogPreview', 'imageAuthorize', 'imageCommit', 'sharedImageCache', 'cacheWrite', 'snapshotRead', 'snapshotBuild', 'snapshotWrite']);
   const cacheStatuses = new Set(['jsonMiss', 'jsonHit', 'jsonInvalid', 'jsonPartial', 'jsonReadError', 'jsonStored',
     'jsonOversize', 'jsonWriteError', 'jsonWriteVerified', 'jsonWriteMissing', 'jsonReadbackError']);
   window.hfPerformance = Object.freeze({

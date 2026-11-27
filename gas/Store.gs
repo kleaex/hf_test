@@ -98,11 +98,11 @@ function one_(sheet, column, value) {
   return matches[0] || null;
 }
 
-function writeRow_(sheet, row, values) {
+function writeRow_(sheet, row, values, affectsPublication) {
   if (HF_REQUEST_) delete HF_REQUEST_.sheets[sheet.getName()];
-  if (['Exhibitors', 'EventSettings'].indexOf(sheet.getName()) >= 0) {
+  if (affectsPublication !== false && ['Exhibitors', 'EventSettings'].indexOf(sheet.getName()) >= 0) {
     // 世代変更に失敗した場合は書込前に停止し、保存成功後に旧公開版が残ることを防ぐ。
-    PropertiesService.getScriptProperties().setProperty('HF_PUBLIC_GENERATION', Utilities.getUuid());
+    invalidatePublication_(PropertiesService.getScriptProperties());
   }
   // 自由入力はJSONセルにのみ格納する。先頭が { のため数式にはならない。
   timed_('sheetWrite', function () {

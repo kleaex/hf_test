@@ -43,7 +43,7 @@ function requestRegistrationCode(name, email) {
 }
 
 function verifyRegistrationCode(name, email, code) {
-  return api_(function () { return locked_(function () { return verifyRegistration_(name, email, code); }); });
+  return api_(function () { HF_REQUEST_.publicationRetry = true; return locked_(function () { return verifyRegistration_(name, email, code); }); });
 }
 
 function requestExhibitorLoginCode(name, email) {
@@ -72,11 +72,11 @@ function getMyProfile(token) {
 }
 
 function saveProfile(token, request) {
-  return api_(function () { return locked_(function () { return saveProfile_(token, request); }); });
+  return api_(function () { HF_REQUEST_.publicationRetry = true; return locked_(function () { return saveProfile_(token, request); }); });
 }
 
 function uploadPublicationImage(token, request) {
-  return api_(function () { return locked_(function () { return uploadImage_(token, request); }); });
+  return api_(function () { HF_REQUEST_.publicationRetry = true; return locked_(function () { return uploadImage_(token, request); }); });
 }
 
 function getPublicationImage(token, imageId, variant) {
@@ -108,7 +108,17 @@ function getAdminDashboard(token) {
 }
 
 function saveAdminEvent(token, request) {
-  return api_(function () { return locked_(function () { return saveAdminEvent_(token, request); }); });
+  return api_(function () { HF_REQUEST_.publicationRetry = true; return locked_(function () { return saveAdminEvent_(token, request); }); });
+}
+
+function rebuildPublicCatalog(token) {
+  return api_(function () { return locked_(function () {
+    const context = authenticateAdmin_(token);
+    invalidatePublication_(context.config.properties);
+    freshRequestConfig_();
+    writePublicSnapshot_(config_(true));
+    return { rebuilt: true };
+  }); });
 }
 
 function previewAdminCatalog(token) {
@@ -140,7 +150,10 @@ function api_(operation) {
     catch (_) { /* 計測設定だけの失敗で業務処理を止めない。 */ }
   }
   let result;
-  try { result = Object.assign({ ok: true }, operation()); }
+  try {
+    result = Object.assign({ ok: true }, operation());
+    if (owner) refreshPublicSnapshotAfterWrite_();
+  }
   catch (error) {
     // 生の例外・接続先・入力・トークンはクライアントやログへ出さない。
     result = { ok: false, error: error && error.hfCode

@@ -102,7 +102,7 @@ function verifyRegistration_(name, input, code) {
   user.values[2] = true;
   user.values[3] = JSON.stringify(auth);
   // 自動公開は有効化済みUsersも参照するため、その確定前に公開キャッシュを失効させる。
-  config.properties.setProperty('HF_PUBLIC_GENERATION', Utilities.getUuid());
+  invalidatePublication_(config.properties);
   writeRow_(db.Users, user.row, user.values);
   // 承認一覧は変更しない。自動公開モードでは有効化後の次回取得から掲載する。
   return issueSession_(config, db, user, membership, record);

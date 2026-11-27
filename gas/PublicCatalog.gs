@@ -1,9 +1,18 @@
 // 正本から公開項目だけを構築し、保存前に世代を変える共有キャッシュで再利用する。承認・手動反映は不要。
 function publicCatalog_() {
   const config = config_(true);
-  const key = publicCacheKey_(config, 'catalog', config.properties.getProperty('HF_PUBLIC_GENERATION') || 'initial');
+  const manifest = snapshotManifest_(config);
+  if (manifest) return readPublicSnapshot_(config, manifest, 'catalog');
+  const key = publicCacheKey_(config, 'catalog', publicationGeneration_(config));
   const cached = timed_('catalogCache', function () { return cachedPublicJson_(key); });
   if (cached) { cached.generatedAt = Date.now(); return cached; }
+  const built = buildPublicCatalogData_(config), data = built.data;
+  timed_('imageIndexSeed', function () { return publicImageIndex_(config, built.settings); });
+  keepPublicJson_(key, data, 60);
+  return data;
+}
+
+function buildPublicCatalogData_(config) {
   let settings;
   const data = timed_('catalogBuild', function () {
     settings = publicationSettings_(config);
@@ -18,10 +27,7 @@ function publicCatalog_() {
       });
     });
   });
-  // 同じ正本の読取結果を使い、最初の画像要求でSheetsを読み直さずに済むようにする。
-  timed_('imageIndexSeed', function () { return publicImageIndex_(config, settings); });
-  keepPublicJson_(key, data, 60);
-  return data;
+  return { data: data, settings: settings };
 }
 
 function publicImage_(imageId, variant) {
@@ -31,9 +37,17 @@ function publicImage_(imageId, variant) {
 }
 
 function publicImageIndex_(config, settings) {
-  const key = publicCacheKey_(config, 'imageIndex', config.properties.getProperty('HF_PUBLIC_GENERATION') || 'initial');
+  const manifest = snapshotManifest_(config);
+  if (manifest) return readPublicSnapshot_(config, manifest, 'imageIndex');
+  const key = publicCacheKey_(config, 'imageIndex', publicationGeneration_(config));
   const cached = timed_('catalogCache', function () { return cachedPublicJson_(key); });
   if (cached) return cached;
+  const images = buildPublicImageIndex_(config, settings);
+  keepPublicJson_(key, images, 60);
+  return images;
+}
+
+function buildPublicImageIndex_(config, settings) {
   const selections = (settings || publicationSettings_(config)).exhibitors;
   const records = HF_REQUEST_ && HF_REQUEST_.sheets.Exhibitors || rows_(database_(config, ['Exhibitors']).Exhibitors);
   const images = Object.create(null);
@@ -47,7 +61,6 @@ function publicImageIndex_(config, settings) {
     });
   });
   // Drive ID等を含む索引はGAS内だけに保存し、API応答へ返さない。
-  keepPublicJson_(key, images, 60);
   return images;
 }
 

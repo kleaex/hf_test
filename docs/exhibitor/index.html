@@ -347,7 +347,9 @@ $('profileForm').addEventListener('submit', event => {
       message(result.replayed ? '保存済みであることを確認しました。最新の保存内容を表示しています。' : '保存しました。');
     } catch (error) {
       // 通信失敗・一時障害は同じ内容とIDで再送。編集を止め、二重作成を防ぐ。
-      if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) {
+      if (error.code === 'PUBLICATION_PENDING') {
+        message(error.message);
+      } else if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) {
         message('保存結果が未確認です。「同じ保存を再試行・結果確認」を押してください。');
       } else {
         pending = null;

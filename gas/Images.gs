@@ -214,7 +214,7 @@ function commitImageUpload_(checked, request, image, staged) {
   const serialized = JSON.stringify(state);
   if (serialized.length > 45000) fail_('VALIDATION', '保存データが大きすぎます。紹介文を短くしてください。');
   // ファイル作成後のSheets失敗でも、同じ要求の再送でファイルを再利用する。
-  writeRow_(context.db.Exhibitors, context.record.row, [context.record.values[0], context.config.eventId, serialized]);
+  writeRow_(context.db.Exhibitors, context.record.row, [context.record.values[0], context.config.eventId, serialized], !staged);
   return { data: view_({ values: [context.record.values[0], context.config.eventId, serialized] }), replayed: false, savedRevision: state.revision };
 }
 

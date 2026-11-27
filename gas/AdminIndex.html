@@ -177,7 +177,8 @@ $('eventForm').addEventListener('submit', event => {
     controls();
     try { const result = await rpc('saveAdminEvent', token, pendingSave); render(result.data); message(result.replayed ? '設定が保存済みであることを確認しました。' : '設定を保存しました。公開ページへの反映はまだです。'); }
     catch (error) {
-      if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) message('保存結果が未確認です。同じ設定保存を再試行してください。');
+      if (error.code === 'PUBLICATION_PENDING') message(error.message);
+      else if (error.network || ['UNAVAILABLE', 'BUSY'].includes(error.code)) message('保存結果が未確認です。同じ設定保存を再試行してください。');
       else { pendingSave = null; message(error.message); }
     }
   });

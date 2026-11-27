@@ -1,5 +1,55 @@
 # 実験環境の設定
 
+## 公開カタログの完成版を永続保存する（今回）
+
+閲覧時のキャッシュ消失で正本4シートから再構築する方式から、保存時に完成版を用意する方式へ移す。
+配置だけでは切り替わらない。全ファイルの配置後、運営画面で一度だけ有効化する。
+
+### 配置するファイル
+
+| 配置先 | ファイル | 操作 |
+| --- | --- | --- |
+| GAS | gas/PublicSnapshot.gs → PublicSnapshot | **スクリプトを追加**。永続版の保存・取得・整合性確認 |
+| GAS | gas/Code.gs → Code | **置換**。保存後の公開反映と運営再生成API |
+| GAS | gas/Store.gs → Store | **置換**。正本保存前の世代更新 |
+| GAS | gas/Registration.gs → Registration | **置換**。登録確定時の世代更新 |
+| GAS | gas/Images.gs → Images | **置換**。仮保存を公開版更新から除外 |
+| GAS | gas/PublicCatalog.gs → PublicCatalog | **置換**。完成版の利用と共通生成処理 |
+| GAS | gas/Bridge.html → Bridge | **置換**。運営再生成APIを通信対象へ追加 |
+| GAS | gas/Index.html → Index | **置換**。旧GAS編集画面の公開反映待ちの再送対応 |
+| GAS | gas/AdminIndex.html → AdminIndex | **置換**。旧GAS運営画面の公開反映待ちの再送対応 |
+| HP | docs/rpc.js | **置換**。再生成APIと完成版の計測区間 |
+| HP | docs/admin/index.html | **置換**。再生成操作と保存再送 |
+| HP | docs/exhibitor/index.html | **置換**。公開反映待ちでも同じ保存要求を保持 |
+
+GASの追加・置換を保存し、**既存デプロイを新バージョンへ更新**してからHPの3ファイルを配信する。
+URL・秘密値・マニフェスト・権限の変更やsetupExperiment_の再実行は不要。PublicSnapshot.gsの追加を忘れないこと。
+
+### 初回有効化
+
+1. HPの運営画面へログインする。未保存の変更があれば先に保存または読み直す。
+2. 「公開データ」欄の **公開データを再生成** を押す。
+3. 「公開データを更新しました」と出たら完了。非公開Spreadsheet内にPublicSnapshotsシートと、内部管理用Script Propertiesが自動作成される。
+4. カタログの本文・画像、プロフィール保存、公開対象切替、新規登録を確認する。
+
+以後は保存時に公開版まで自動更新し、日常の承認・手動反映作業は増えない。
+シート直接編集や公開版の復旧時だけ同じ再生成ボタンを使う。PublicSnapshotsと内部管理プロパティは手で編集しない。
+再生成ボタンはHPの運営画面に追加している。旧GAS運営画面には追加していない。
+
+### 失敗時と計測
+
+- 正本保存後に公開版を作れなかった場合は、その旨を表示する。同じ保存を再試行して復旧する。公開側は古い本文・画像へ戻さない。
+- 登録後の公開反映失敗ではログインしてプロフィールを保存するか、運営が再生成する。登録済みアカウントを作り直さない。
+- 保存側で生成する分、保存時間は増える。GAS接続・転送・初回画像のDrive確認は残り、短縮秒数は保証しない。
+- 完成版が大きくなると行領域を拡張する。旧領域・余った行の自動整理と版履歴UIは今回の対象外。
+
+ページ再読み込み後、`JSON.stringify(hfPerformance.snapshot(), null, 2)` で確認する。
+共有キャッシュがない場合はcatalogDirect内にsnapshotReadが出て、catalogBuild・imageIndexSeed・正本のsheetReadは出ない。
+命中時はsnapshotReadも不要。保存側のsnapshotBuild・snapshotWriteは入れ子なので足し合わせない。
+generatedAtは公開版を作った時刻になる。実際の保存・取得時間は配置後に確認する。
+
+契約の詳細は[PUBLIC_SNAPSHOT.md](PUBLIC_SNAPSHOT.md)、試験はtests/public-snapshot.test.mjsを参照。
+
 ## 自動公開の再構築時の余分な読取を除く
 
 別ブラウザーでの提供ログでは本文DOM準備9,726.5ms、直接取得9,418ms／GAS内4,971ms。

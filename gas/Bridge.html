@@ -5,7 +5,7 @@ const settings = <?!= settings ?>;
 const methods = new Set(['getSystemStatus', 'getPublicCatalog', 'getPublicImage', 'getPublicImages',
   'requestRegistrationCode', 'verifyRegistrationCode', 'requestExhibitorLoginCode', 'verifyExhibitorLoginCode',
   'requestLoginCode', 'verifyLoginCode', 'getMyProfile', 'saveProfile', 'stagePublicationImage', 'getPublicationImage', 'logout',
-  'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'getAdminImage', 'logoutAdmin']);
+  'requestAdminLoginCode', 'verifyAdminLoginCode', 'getAdminDashboard', 'saveAdminEvent', 'rebuildPublicCatalog', 'getAdminImage', 'logoutAdmin']);
 const active = new Set();
 window.addEventListener('message', event => {
   const message = event.data;
